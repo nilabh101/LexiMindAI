@@ -34,20 +34,35 @@ async def _get_doc_text(doc_id: int, db: AsyncSession) -> tuple:
 async def word_analysis(
     doc_id: int,
     top_n: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
+    use_stemming: bool = Query(False),
+    use_lemmatization: bool = Query(True),
+    db: AsyncSession = Depends(get_db)
 ):
     doc, text = await _get_doc_text(doc_id, db)
-    tokens = get_clean_tokens(text, remove_stopwords=True)
-    tokens_with_sw = get_clean_tokens(text, remove_stopwords=False)
+    tokens = get_clean_tokens(
+        text,
+        remove_stopwords=True,
+        use_stemming=use_stemming,
+        use_lemmatization=use_lemmatization,
+    )
+    tokens_with_sw = get_clean_tokens(
+        text,
+        remove_stopwords=False,
+        use_stemming=use_stemming,
+        use_lemmatization=use_lemmatization,
+    )
     freq = word_frequency(tokens, top_n=top_n)
     freq_with_sw = word_frequency(tokens_with_sw, top_n=top_n)
     return {
         "document_id": doc_id,
         "top_n": top_n,
+        "use_stemming": use_stemming,
+        "use_lemmatization": use_lemmatization,
         "frequency": freq,
         "frequency_with_stopwords": freq_with_sw,
         "total_tokens": len(tokens),
     }
+
 
 
 @router.get("/{doc_id}/wordcloud")
@@ -62,8 +77,16 @@ async def wordcloud(doc_id: int, db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/{doc_id}/lexical_diversity")
+async def lexical_diversity(doc_id: int, db: AsyncSession = Depends(get_db)):
+    doc, text = await _get_doc_text(doc_id, db)
+    stats = compute_stats(text)
+    return {"document_id": doc_id, "lexical_diversity": stats.get("lexical_diversity")}
 @router.get("/{doc_id}/sentiment")
-async def sentiment_analysis(doc_id: int, db: AsyncSession = Depends(get_db)):
+async def sentiment_analysis(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db)
+):
     doc, text = await _get_doc_text(doc_id, db)
     result = analyze_document_sentiment(text)
     return {"document_id": doc_id, **result}
@@ -76,14 +99,18 @@ async def emotion_analysis(doc_id: int, db: AsyncSession = Depends(get_db)):
     return {"document_id": doc_id, **result}
 
 
+@router.get("/{doc_id}/unique_words")
+async def unique_word_count(doc_id: int, db: AsyncSession = Depends(get_db)):
+    doc, text = await _get_doc_text(doc_id, db)
+    stats = compute_stats(text)
+    return {"document_id": doc_id, "unique_word_count": stats.get("unique_word_count")}
+
 @router.get("/{doc_id}/topics")
-async def topic_detection(doc_id: int, db: AsyncSession = Depends(get_db)):
+async def topics_endpoint(doc_id: int, db: AsyncSession = Depends(get_db)):
     doc, text = await _get_doc_text(doc_id, db)
     topics = detect_topics(text)
     keywords = extract_keywords_tfidf(text, top_n=20)
     return {"document_id": doc_id, "topics": topics, "keywords": keywords}
-
-
 @router.get("/{doc_id}/entities")
 async def entity_extraction(doc_id: int, db: AsyncSession = Depends(get_db)):
     doc, text = await _get_doc_text(doc_id, db)

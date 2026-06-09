@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Brain, Upload, BarChart3, MessageSquare, BookOpen,
@@ -22,6 +22,7 @@ const NAV = [
 ];
 
 export function Layout() {
+  const location = useLocation();
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}

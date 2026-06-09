@@ -48,6 +48,10 @@ async def upload_document(
     text = clean_text(text)
     stats = compute_stats(text)
 
+    valid_cols = {
+        "word_count", "unique_word_count", "sentence_count", "paragraph_count",
+        "character_count", "reading_time_minutes", "reading_grade_level", "lexical_diversity"
+    }
     doc = Document(
         filename=safe_name,
         original_filename=file.filename,
@@ -55,7 +59,7 @@ async def upload_document(
         file_size=save_path.stat().st_size,
         extracted_text=text,
         status="ready",
-        **{k: v for k, v in stats.items()},
+        **{k: v for k, v in stats.items() if k in valid_cols},
     )
     db.add(doc)
     await db.flush()

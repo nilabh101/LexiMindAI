@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+const BASE_URL = (import.meta as any).env?.VITE_API_URL || "http://localhost:8000/api";
 
 export const api = axios.create({
   baseURL: BASE_URL,
@@ -29,13 +29,23 @@ export const getDocument = (id: number) => api.get(`/documents/${id}`);
 export const deleteDocument = (id: number) => api.delete(`/documents/${id}`);
 
 // Analysis
-export const getWordAnalysis = (id: number, topN = 50) =>
-  api.get(`/analysis/${id}/words?top_n=${topN}`);
+export const getWordAnalysis = (id: number, topN = 50, useStemming = false) => {
+  const useLemmatization = !useStemming;
+  return api.get(`/analysis/${id}/words?top_n=${topN}&use_stemming=${useStemming}&use_lemmatization=${useLemmatization}`).then(r => r.data);
+};
 export const getWordCloud = (id: number) => api.get(`/analysis/${id}/wordcloud`);
 export const getSentiment = (id: number) => api.get(`/analysis/${id}/sentiment`);
-export const getEmotions = (id: number) => api.get(`/analysis/${id}/emotions`);
-export const getTopics = (id: number) => api.get(`/analysis/${id}/topics`);
-export const getEntities = (id: number) => api.get(`/analysis/${id}/entities`);
+export const getLexicalDiversity = (id: number) =>
+  api.get(`/analysis/${id}/lexical_diversity`).then(r => r.data);
+export const getUniqueWords = (id: number) =>
+  api.get(`/analysis/${id}/unique_words`).then(r => r.data);
+export const getTopics = (id: number) =>
+  api.get(`/analysis/${id}/topics`).then(r => r.data);
+export const getEntities = (id: number) =>
+  api.get(`/analysis/${id}/entities`).then(r => r.data);
+// Duplicate export removed
+// export const getTopics = (id: number) => api.get(`/analysis/${id}/topics`);
+// export const getEntities = (id: number) => api.get(`/analysis/${id}/entities`);
 export const getStyle = (id: number) => api.get(`/analysis/${id}/style`);
 export const getDNA = (id: number) => api.get(`/analysis/${id}/dna`);
 export const getSummary = (id: number) => api.get(`/analysis/${id}/summary`);

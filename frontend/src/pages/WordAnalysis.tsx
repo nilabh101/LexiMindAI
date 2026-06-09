@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { BarChart3, Search } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Treemap
 } from "recharts";
-import { getWordAnalysis, getWordCloud } from "../lib/api";
+import { getWordAnalysis, getWordCloud, getLexicalDiversity } from "../lib/api";
 import { DocSelector } from "../components/DocSelector";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { PageHeader } from "../components/PageHeader";
@@ -13,23 +14,31 @@ import { PageHeader } from "../components/PageHeader";
 const COLORS = ["#6366f1", "#8b5cf6", "#a855f7", "#ec4899", "#06b6d4", "#10b981", "#f59e0b"];
 
 export function WordAnalysis() {
-  const [docId, setDocId] = useState<number | null>(null);
+  const location = useLocation();
+  const initialDocId = location.state?.docId || null;
+  const [docId, setDocId] = useState<number | null>(initialDocId);
   const [topN, setTopN] = useState(25);
+  const [useStemming, setUseStemming] = useState(false);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"bar" | "table" | "cloud" | "treemap">("bar");
 
   const { data, isLoading } = useQuery({
-    queryKey: ["words", docId, topN],
-    queryFn: () => getWordAnalysis(docId!, topN).then(r => r.data),
+    queryKey: ["words", docId, topN, useStemming],
+    queryFn: () => getWordAnalysis(docId!, topN, useStemming).then(r => r.data),
     enabled: !!docId,
   });
 
   const { data: wcData, isLoading: wcLoading } = useQuery({
-    queryKey: ["wordcloud", docId],
-    queryFn: () => getWordCloud(docId!).then(r => r.data),
-    enabled: !!docId && tab === "cloud",
-  });
+  queryKey: ["wordcloud", docId],
+  queryFn: () => getWordCloud(docId!).then(r => r.data),
+  enabled: !!docId && tab === "cloud",
+});
 
+const { data: lexicalData, isLoading: lexicalLoading } = useQuery({
+  queryKey: ["lexical_diversity", docId],
+  queryFn: () => getLexicalDiversity(docId!).then(r => r.data),
+  enabled: !!docId,
+});
   const words: any[] = data?.frequency || [];
   const filtered = words.filter(w => !search || w.word.includes(search.toLowerCase()));
 
@@ -50,6 +59,14 @@ export function WordAnalysis() {
         >
           {[10, 25, 50, 100].map(n => <option key={n} value={n}>Top {n}</option>)}
         </select>
+        <select
+          value={useStemming ? "stem" : "lemma"}
+          onChange={e => setUseStemming(e.target.value === "stem")}
+          className="input-field w-44"
+        >
+          <option value="lemma">Lemmatization</option>
+          <option value="stem">Stemming (Porter)</option>
+        </select>
       </div>
 
       {!docId && (
@@ -63,7 +80,7 @@ export function WordAnalysis() {
       {data && (
         <>
           {/* Stats row */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-4 gap-4 mb-6">
             <div className="glass-card p-4 text-center">
               <div className="text-2xl font-bold text-brand-400">{data.total_tokens?.toLocaleString()}</div>
               <div className="text-xs text-slate-400 mt-1">Clean Tokens</div>
@@ -75,6 +92,10 @@ export function WordAnalysis() {
             <div className="glass-card p-4 text-center">
               <div className="text-2xl font-bold text-emerald-400">{words[0]?.word || "—"}</div>
               <div className="text-xs text-slate-400 mt-1">Top Word</div>
+            </div>
+            <div className="glass-card p-4 text-center">
+              <div className="text-2xl font-bold text-orange-400">{lexicalLoading ? '…' : lexicalData?.lexical_diversity?.toLocaleString() ?? '—'}</div>
+              <div className="text-xs text-slate-400 mt-1">Lexical Diversity</div>
             </div>
           </div>
 
@@ -189,7 +210,7 @@ export function WordAnalysis() {
                   data={words.slice(0, 40).map(w => ({ name: w.word, size: w.count }))}
                   dataKey="size"
                   aspectRatio={4 / 3}
-                  content={({ x, y, width, height, name, value }: any) => (
+                  content={(({ x, y, width, height, name, value }: any) => (
                     <g>
                       <rect x={x} y={y} width={width} height={height}
                         fill={COLORS[Math.floor(Math.random() * COLORS.length)]}
@@ -201,7 +222,7 @@ export function WordAnalysis() {
                         </text>
                       )}
                     </g>
-                  )}
+                  )) as any}
                 />
               </ResponsiveContainer>
             </motion.div>

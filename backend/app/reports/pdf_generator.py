@@ -123,6 +123,7 @@ def generate_report(
         ["Avg Sentence Length", f"{stats.get('average_sentence_length', 0)} words"],
         ["Reading Time", f"{stats.get('reading_time_minutes', 0)} minutes"],
         ["Reading Grade Level", f"{stats.get('reading_grade_level', 0)}"],
+        ["Flesch Reading Ease", f"{stats.get('flesch_reading_ease', 0)}"],
         ["Lexical Diversity", f"{round(stats.get('lexical_diversity', 0) * 100, 1)}%"],
         ["Vocabulary Richness", f"{stats.get('vocabulary_richness', 0)}%"],
     ]

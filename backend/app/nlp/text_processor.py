@@ -8,7 +8,7 @@ import math
 import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize, word_tokenize
-from nltk.stem import WordNetLemmatizer
+from nltk.stem import WordNetLemmatizer, PorterStemmer
 
 # Download required NLTK data on first use
 _NLTK_DOWNLOADED = False
@@ -28,6 +28,7 @@ def _ensure_nltk_data():
 
 _ensure_nltk_data()
 _lemmatizer = WordNetLemmatizer()
+_stemmer = PorterStemmer()
 _STOP_WORDS = set(stopwords.words("english"))
 
 
@@ -57,11 +58,15 @@ def tokenize(text: str) -> List[str]:
         return re.findall(r"\b[a-zA-Z]+\b", text)
 
 
-def get_clean_tokens(text: str, remove_stopwords: bool = True) -> List[str]:
-    """Return lemmatized, lowercased tokens with optional stopword removal."""
+def get_clean_tokens(text: str, remove_stopwords: bool = True, use_stemming: bool = False, use_lemmatization: bool = True) -> List[str]:
+    """Return lemmatized or stemmed, lowercased tokens with optional stopword removal. If both stemming and lemmatization are False, tokens are returned without morphological processing."""
     tokens = tokenize(text)
     tokens = [t.lower() for t in tokens if t.isalpha() and len(t) > 1]
-    tokens = [_lemmatizer.lemmatize(t) for t in tokens]
+    if use_stemming:
+        tokens = [_stemmer.stem(t) for t in tokens]
+    elif use_lemmatization:
+        tokens = [_lemmatizer.lemmatize(t) for t in tokens]
+    # else: keep tokens unchanged
     if remove_stopwords:
         tokens = [t for t in tokens if t not in _STOP_WORDS]
     return tokens
@@ -97,7 +102,7 @@ def compute_stats(text: str) -> Dict[str, Any]:
     reading_time = round(word_count / 238, 1)  # avg reading speed
     lexical_diversity = round(unique_count / word_count, 4) if word_count > 0 else 0
 
-    # Flesch-Kincaid Grade Level
+    # Flesch-Kincaid Grade Level & Flesch Reading Ease
     syllable_count = sum(_count_syllables(w) for w in words)
     if sentence_count > 0 and word_count > 0:
         fk_grade = round(
@@ -106,8 +111,15 @@ def compute_stats(text: str) -> Dict[str, Any]:
             - 15.59,
             1,
         )
+        flesch_ease = round(
+            206.835
+            - 1.015 * (word_count / sentence_count)
+            - 84.6 * (syllable_count / word_count),
+            1,
+        )
     else:
         fk_grade = 0.0
+        flesch_ease = 0.0
 
     # Vocabulary richness (Yule's K approximation via type-token ratio)
     vocab_richness = round((unique_count / word_count) * 100, 1) if word_count > 0 else 0
@@ -121,6 +133,7 @@ def compute_stats(text: str) -> Dict[str, Any]:
         "average_sentence_length": avg_sentence_len,
         "reading_time_minutes": reading_time,
         "reading_grade_level": fk_grade,
+        "flesch_reading_ease": flesch_ease,
         "lexical_diversity": lexical_diversity,
         "vocabulary_richness": vocab_richness,
     }
