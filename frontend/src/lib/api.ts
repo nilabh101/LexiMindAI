@@ -66,6 +66,15 @@ export const getWordAnalysis = (
 export const getWordCloud = (id: number) =>
   api.get(`/analysis/${id}/wordcloud`);
 
+export const getDocumentStats = (id: number) =>
+  api.get(`/analysis/${id}/stats`);
+
+export const getFlashcards = (id: number, numCards = 15) =>
+  api.get(`/analysis/${id}/flashcards`, { params: { num_cards: numCards } });
+
+export const searchInDocument = (id: number, query: string, caseSensitive = false) =>
+  api.get(`/documents/${id}/search`, { params: { query, case_sensitive: caseSensitive } });
+
 export const getSentiment = (id: number) =>
   api.get(`/analysis/${id}/sentiment`);
 
