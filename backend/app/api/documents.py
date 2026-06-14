@@ -156,3 +156,56 @@ async def delete_document(doc_id: int, db: AsyncSession = Depends(get_db)):
 
     await db.execute(delete(Document).where(Document.id == doc_id))
     return {"message": f"Document {doc_id} deleted successfully"}
+
+
+@router.get("/{doc_id}/search")
+async def search_in_document(
+    doc_id: int,
+    query: str = Query(..., min_length=1),
+    case_sensitive: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search for a word or phrase — returns total count, every location, context snippets."""
+    import re
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc.extracted_text:
+        raise HTTPException(status_code=422, detail="Document text not available")
+
+    text = doc.extracted_text
+    flags = 0 if case_sensitive else re.IGNORECASE
+    pattern = re.escape(query)
+    matches = list(re.finditer(pattern, text, flags))
+
+    occurrences = []
+    for i, m in enumerate(matches[:200]):
+        start = max(0, m.start() - 100)
+        end = min(len(text), m.end() + 100)
+        snippet = text[start:end].replace("\n", " ").strip()
+        line_number = text[: m.start()].count("\n") + 1
+        occurrences.append({
+            "occurrence_number": i + 1,
+            "line": line_number,
+            "char_position": m.start(),
+            "snippet": f"...{snippet}...",
+            "matched_text": m.group(),
+        })
+
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    para_counts = []
+    for i, para in enumerate(paragraphs):
+        hits = len(re.findall(pattern, para, flags))
+        if hits > 0:
+            para_counts.append({"paragraph": i + 1, "count": hits})
+
+    return {
+        "document_id": doc_id,
+        "query": query,
+        "case_sensitive": case_sensitive,
+        "total_count": len(matches),
+        "occurrences": occurrences,
+        "paragraph_distribution": para_counts,
+        "total_paragraphs_with_match": len(para_counts),
+    }

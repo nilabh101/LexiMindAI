@@ -9,10 +9,13 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str = "leximind-secret-key-change-in-production-32chars"
     DATABASE_URL: str = "sqlite+aiosqlite:///./leximind.db"
-    MAX_FILE_SIZE_MB: int = 50
+    MAX_FILE_SIZE_MB: int = 500
     ALLOWED_EXTENSIONS: str = "txt,pdf,docx"
     RATE_LIMIT_PER_MINUTE: int = 60
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:5174"
+
+    # AI Chatbot (optional — falls back to rule-based if not set)
+    GEMINI_API_KEY: str = ""
 
     @property
     def allowed_extensions_list(self) -> List[str]:

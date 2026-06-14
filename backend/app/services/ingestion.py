@@ -1,16 +1,16 @@
-"""Document ingestion: text extraction from TXT, PDF, DOCX."""
-import os
+"""Document ingestion: save upload and extract text from TXT, PDF, DOCX."""
 import re
 import uuid
 import chardet
 from pathlib import Path
 from typing import Tuple
 from fastapi import UploadFile, HTTPException
-from app.core.config import settings
-
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+MAX_FILE_BYTES = 500 * 1024 * 1024          # 500 MB hard limit
+ALLOWED_EXTENSIONS = {"txt", "pdf", "docx"}
 
 
 def _safe_filename(filename: str) -> str:
@@ -19,24 +19,24 @@ def _safe_filename(filename: str) -> str:
 
 
 async def save_upload(file: UploadFile) -> Tuple[Path, str]:
-    """Save uploaded file to disk. Returns (path, safe_filename)."""
+    """Validate, save the uploaded file to disk and return (path, safe_name)."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided.")
+
     ext = Path(file.filename).suffix.lstrip(".").lower()
-    if ext not in settings.allowed_extensions_list:
+    if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"File type '.{ext}' not allowed. Supported: {settings.allowed_extensions_list}",
+            detail=f"'.{ext}' is not supported. Please upload TXT, PDF, or DOCX.",
         )
 
     content = await file.read()
-    if len(content) > settings.max_file_size_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds maximum size of {settings.MAX_FILE_SIZE_MB}MB",
-        )
 
-    # Basic malicious content check
-    if b"<script" in content[:1024] or b"<?php" in content[:512]:
-        raise HTTPException(status_code=400, detail="File contains potentially malicious content")
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 500 MB limit.")
 
     safe_name = _safe_filename(file.filename)
     save_path = UPLOAD_DIR / safe_name
@@ -45,15 +45,17 @@ async def save_upload(file: UploadFile) -> Tuple[Path, str]:
 
 
 def extract_text_from_file(file_path: Path, ext: str) -> str:
-    """Extract plain text from supported file types."""
+    """Extract plain text. Tries multiple strategies per format before giving up."""
     if ext == "txt":
         return _extract_txt(file_path)
     elif ext == "pdf":
         return _extract_pdf(file_path)
     elif ext == "docx":
         return _extract_docx(file_path)
-    raise ValueError(f"Unsupported extension: {ext}")
+    raise HTTPException(status_code=400, detail=f"Unsupported extension: {ext}")
 
+
+# ─── TXT ──────────────────────────────────────────────────────────────────────
 
 def _extract_txt(path: Path) -> str:
     raw = path.read_bytes()
@@ -65,24 +67,89 @@ def _extract_txt(path: Path) -> str:
         return raw.decode("utf-8", errors="replace")
 
 
-def _extract_pdf(path: Path) -> str:
-    try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(str(path))
-        pages = []
-        for page in doc:
-            pages.append(page.get_text("text"))
-        doc.close()
-        return "\n\n".join(pages)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"PDF extraction failed: {str(e)}")
+# ─── PDF ──────────────────────────────────────────────────────────────────────
 
+def _extract_pdf(path: Path) -> str:
+    text = ""
+
+    # Strategy 1: PyMuPDF (best quality, handles most PDFs)
+    try:
+        import fitz
+        doc = fitz.open(str(path))
+        pages = [page.get_text("text") for page in doc]
+        doc.close()
+        text = "\n\n".join(p for p in pages if p.strip())
+        if len(text.strip()) > 50:
+            return text
+    except Exception:
+        pass
+
+    # Strategy 2: PyPDF2 fallback
+    try:
+        from PyPDF2 import PdfReader
+        import io
+        reader = PdfReader(str(path))
+        pages = []
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                pages.append(t)
+        text = "\n\n".join(pages)
+        if len(text.strip()) > 50:
+            return text
+    except Exception:
+        pass
+
+    # Strategy 3: pdfminer (most compatible with complex layouts)
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract
+        text = pdfminer_extract(str(path))
+        if len(text.strip()) > 50:
+            return text
+    except Exception:
+        pass
+
+    # If we got something, return it even if short
+    if text.strip():
+        return text
+
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Could not extract text from this PDF. "
+            "It may be image-based (scanned). "
+            "Try converting it to text first, or use a PDF with selectable text."
+        ),
+    )
+
+
+# ─── DOCX ─────────────────────────────────────────────────────────────────────
 
 def _extract_docx(path: Path) -> str:
     try:
         from docx import Document
         doc = Document(str(path))
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        return "\n\n".join(paragraphs)
+
+        parts = []
+        # Main paragraphs
+        for para in doc.paragraphs:
+            if para.text.strip():
+                parts.append(para.text)
+
+        # Tables
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    parts.append(row_text)
+
+        text = "\n\n".join(parts)
+        if len(text.strip()) > 0:
+            return text
+
+        raise HTTPException(status_code=422, detail="No text content found in this DOCX file.")
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"DOCX extraction failed: {str(e)}")

@@ -122,7 +122,6 @@ def extract_keywords_tfidf(text: str, top_n: int = 20) -> List[Dict[str, Any]]:
         for i, (kw, score) in enumerate(sorted_kw)
     ]
 
-
 def extract_entities(text: str) -> Dict[str, Any]:
     nlp = _get_nlp()
     entity_map: Dict[str, List[Dict]] = {

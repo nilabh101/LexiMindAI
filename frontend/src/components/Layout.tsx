@@ -4,6 +4,7 @@ import {
   Brain, Upload, BarChart3, Zap, Home, Search, FileText, Layers, Cpu
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { ChatBot } from "./ChatBot";
 
 const NAV = [
   { to: "/",            icon: Home,     label: "Dashboard"           },
@@ -86,6 +87,9 @@ export function Layout() {
           <Outlet />
         </motion.div>
       </main>
+
+      {/* Floating AI Chatbot */}
+      <ChatBot />
     </div>
   );
 }

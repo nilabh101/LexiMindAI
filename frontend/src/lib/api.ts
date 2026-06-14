@@ -114,8 +114,26 @@ export const getSummary = (id: number) =>
 export const getQuestions = (id: number) =>
   api.get(`/analysis/${id}/questions`);
 
-export const getQuiz = (id: number) =>
-  api.get(`/analysis/${id}/quiz`);
+export const getQuiz = (id: number, numQuestions = 10) =>
+  api.get(`/analysis/${id}/quiz`, { params: { num_questions: numQuestions } });
+
+export const multiDocumentQuiz = (docIds: number[], numQuestions = 20) =>
+  api.post(`/analysis/multi-quiz`, docIds, { params: { num_questions: numQuestions } });
+
+// (getFlashcards already declared above)
+
+// =====================
+// CHAT
+// =====================
+
+export interface ChatMessage { role: "user" | "assistant"; content: string; }
+
+export const sendChatMessage = (
+  message: string,
+  docId?: number | null,
+  history: ChatMessage[] = []
+) =>
+  api.post("/chat", { message, doc_id: docId ?? null, history });
 
 export const getInsights = (id: number) =>
   api.get(`/analysis/${id}/insights`);
