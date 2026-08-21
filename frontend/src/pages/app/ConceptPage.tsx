@@ -1,9 +1,10 @@
 import { useParams, Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Clock, CheckCircle, BookOpen, Zap, MessageCircle, ChevronRight, AlertCircle } from "lucide-react";
+import { ArrowLeft, Clock, CheckCircle, BookOpen, Zap, MessageCircle, ChevronRight } from "lucide-react";
 import { getConcept, getSubject, getChapter, CONCEPTS } from "../../data/curriculum";
 import { getMastery, masteryColor, masteryBgColor, statusLabel } from "../../services/adaptiveEngine";
-import { DEMO_NOTES, DEMO_PYQS } from "../../data/demoData";
+import { listAcademicNotes, listQuestions } from "../../lib/api";
 
 export function ConceptPage() {
   const { conceptId } = useParams<{ conceptId: string }>();
@@ -12,8 +13,14 @@ export function ConceptPage() {
   const chapter = concept ? getChapter(concept.chapterId) : null;
   const mastery = conceptId ? getMastery(conceptId) : undefined;
 
-  const notes = DEMO_NOTES.filter(n => n.conceptId === conceptId);
-  const pyqs = DEMO_PYQS.filter(p => p.conceptId === conceptId);
+  const [notes, setNotes] = useState<any[]>([]);
+  const [pyqs, setPyqs] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!conceptId) return;
+    listAcademicNotes({ concept_id: conceptId }).then(r => setNotes(r.data || [])).catch(() => setNotes([]));
+    listQuestions({ concept_id: conceptId }).then(r => setPyqs((r.data || []).filter((q: any) => q.source === "PYQ" || q.source === "DEMO"))).catch(() => setPyqs([]));
+  }, [conceptId]);
   const prereqConcepts = concept?.prerequisites.map(id => CONCEPTS.find(c => c.id === id)).filter(Boolean) ?? [];
 
   if (!concept) return (
@@ -129,7 +136,7 @@ export function ConceptPage() {
                 <div className="bg-white/3 border border-white/6 rounded-xl p-4 hover:bg-white/5 transition-all flex items-center justify-between">
                   <div>
                     <div className="text-sm font-medium text-white">{note.title}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{note.summary?.slice(0, 80)}...</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{note.summary?.slice(0, 80)}{note.isDemo ? " · DEMO" : ""}</div>
                   </div>
                   <ChevronRight size={14} className="text-slate-500 shrink-0 ml-3" />
                 </div>
@@ -149,14 +156,15 @@ export function ConceptPage() {
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <p className="text-sm text-slate-200 leading-relaxed">{pyq.question}</p>
                   <div className="shrink-0 flex gap-2">
-                    <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-0.5 rounded-lg">{pyq.year}</span>
-                    <span className="text-xs bg-white/8 text-slate-400 px-2 py-0.5 rounded-lg">{pyq.marks}M</span>
+                    {pyq.year != null && <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-0.5 rounded-lg">{pyq.year}</span>}
+                    {pyq.marks != null && <span className="text-xs bg-white/8 text-slate-400 px-2 py-0.5 rounded-lg">{pyq.marks}M</span>}
+                    {pyq.source && <span className="text-xs bg-white/8 text-slate-500 px-2 py-0.5 rounded-lg">{pyq.source}</span>}
                   </div>
                 </div>
                 <details className="text-xs text-slate-400">
                   <summary className="cursor-pointer text-indigo-400 hover:text-indigo-300 transition-colors">Show Solution</summary>
-                  <div className="mt-2 p-3 bg-black/20 rounded-lg leading-relaxed">{pyq.solution}</div>
-                  <div className="mt-1.5 text-slate-500">{pyq.explanation}</div>
+                  {pyq.answer && <div className="mt-2 p-3 bg-black/20 rounded-lg leading-relaxed">{pyq.answer}</div>}
+                  {pyq.explanation && <div className="mt-1.5 text-slate-500">{pyq.explanation}</div>}
                 </details>
               </div>
             ))}

@@ -25,6 +25,7 @@ import { QuizzesPage }      from "./pages/app/QuizzesPage";
 import { PYQsPage }         from "./pages/app/PYQsPage";
 import { NotesPage, NoteDetailPage } from "./pages/app/NotesPage";
 import { LibraryPage }      from "./pages/app/LibraryPage";
+import { DocumentDetailPage } from "./pages/app/DocumentDetailPage";
 import { TutorPage }        from "./pages/app/TutorPage";
 import { ProgressPage }     from "./pages/app/ProgressPage";
 import { ProfilePage }      from "./pages/app/ProfilePage";
@@ -60,6 +61,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="notes"                   element={<NotesPage />} />
             <Route path="notes/:noteId"           element={<NoteDetailPage />} />
             <Route path="library"                 element={<LibraryPage />} />
+            <Route path="library/:docId"          element={<DocumentDetailPage />} />
             <Route path="tutor"                   element={<TutorPage />} />
             <Route path="progress"                element={<ProgressPage />} />
             <Route path="profile"                 element={<ProfilePage />} />

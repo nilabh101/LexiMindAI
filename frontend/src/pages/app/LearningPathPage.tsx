@@ -1,9 +1,12 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { CheckCircle, Lock, Clock, ChevronRight, AlertCircle, Circle, Zap } from "lucide-react";
-import { getLearningPath, masteryColor } from "../../services/adaptiveEngine";
+import { masteryColor } from "../../services/adaptiveEngine";
 import { getConcept, getSubject } from "../../data/curriculum";
-import type { LearningPathItemStatus } from "../../types/education";
+import type { LearningPathItem, LearningPathItemStatus } from "../../types/education";
+import { getLearningPathApi } from "../../lib/api";
+import { loadUser } from "../../store/userStore";
 
 const STATUS_CONFIG: Record<LearningPathItemStatus, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
   locked:      { color: "text-slate-500",  bg: "bg-slate-700/30 border-slate-600/30",    icon: <Lock size={14} />,          label: "Locked" },
@@ -14,7 +17,17 @@ const STATUS_CONFIG: Record<LearningPathItemStatus, { color: string; bg: string;
 };
 
 export function LearningPathPage() {
-  const path = getLearningPath();
+  const user = loadUser();
+  const [path, setPath] = useState<LearningPathItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const userId = user?.id || "demo-user-1";
+    const subjectId = user?.academicProfile?.subjectIds?.[0] || "em1-btech";
+    getLearningPathApi(userId, subjectId)
+      .then(r => setPath(r.data.items || []))
+      .catch(e => setError(e?.message || "Could not load learning path"));
+  }, [user?.id]);
 
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto">
@@ -23,6 +36,7 @@ export function LearningPathPage() {
         <p className="text-slate-400 text-sm mt-1">
           Your personalised roadmap. Concepts are ordered by prerequisites and your mastery.
         </p>
+        {error && <p className="text-sm text-red-300 mt-2">{error}</p>}
       </div>
 
       {/* Legend */}

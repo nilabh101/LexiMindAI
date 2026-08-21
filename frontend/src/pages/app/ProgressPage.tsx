@@ -1,14 +1,44 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, CheckCircle, Clock, Zap, Flame, Target } from "lucide-react";
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, Cell } from "recharts";
-import { getProgressStats, masteryColor } from "../../services/adaptiveEngine";
-import { DEMO_MASTERY } from "../../data/demoData";
+import { masteryColor } from "../../services/adaptiveEngine";
 import { CONCEPTS, getSubject } from "../../data/curriculum";
+import { getProgressApi } from "../../lib/api";
+import { loadUser } from "../../store/userStore";
+import type { ProgressStats } from "../../types/education";
 
 const COLORS = ["#6366f1","#10b981","#f59e0b","#ef4444","#06b6d4","#8b5cf6"];
 
 export function ProgressPage() {
-  const stats = getProgressStats();
+  const user = loadUser();
+  const [stats, setStats] = useState<ProgressStats>({
+    totalConcepts: 0, masteredConcepts: 0, inProgressConcepts: 0, needsReviewConcepts: 0,
+    totalQuizAttempts: 0, pyqsSolved: 0, totalStudyMinutes: 0, streak: 0, subjectMastery: [],
+  });
+  const [masteryRows, setMasteryRows] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const userId = user?.id || "demo-user-1";
+    getProgressApi(userId)
+      .then(r => {
+        const d = r.data;
+        setStats({
+          totalConcepts: d.totalConcepts ?? 0,
+          masteredConcepts: d.masteredConcepts ?? 0,
+          inProgressConcepts: d.inProgressConcepts ?? 0,
+          needsReviewConcepts: d.needsReviewConcepts ?? 0,
+          totalQuizAttempts: d.totalQuizAttempts ?? 0,
+          pyqsSolved: d.pyqsSolved ?? 0,
+          totalStudyMinutes: d.totalStudyMinutes ?? 0,
+          streak: d.streak ?? 0,
+          subjectMastery: d.subjectMastery ?? [],
+        });
+        setMasteryRows(d.concepts || []);
+      })
+      .catch(e => setError(e?.message || "Could not load progress"));
+  }, [user?.id]);
 
   const subjectRadarData = stats.subjectMastery.map(sm => ({
     subject: getSubject(sm.subjectId)?.shortName ?? sm.subjectId,
@@ -27,6 +57,7 @@ export function ProgressPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Progress</h1>
         <p className="text-slate-400 text-sm mt-1">Your learning journey at a glance.</p>
+        {error && <p className="text-sm text-red-300 mt-2">{error}</p>}
       </div>
 
       {/* Top stats */}
@@ -81,7 +112,7 @@ export function ProgressPage() {
       {/* Concept list */}
       <h3 className="font-semibold text-white mb-4">All Concepts</h3>
       <div className="space-y-2">
-        {DEMO_MASTERY.map((m, i) => {
+        {masteryRows.map((m, i) => {
           const concept = CONCEPTS.find(c => c.id === m.conceptId);
           const sub = concept ? getSubject(concept.subjectId) : null;
           if (!concept) return null;

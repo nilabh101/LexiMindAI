@@ -24,11 +24,17 @@ class ChatRequest(BaseModel):
     message: str
     doc_id: Optional[int] = None
     history: Optional[List[ChatMessage]] = []
+    subject_id: Optional[str] = None
+    concept_id: Optional[str] = None
+    education_level: Optional[str] = None
+    course: Optional[str] = None
+    action: Optional[str] = None  # explain | simplify | example | hint | test | similar | mistake
 
 
 class ChatResponse(BaseModel):
     reply: str
     model: str
+    sources: Optional[List[dict]] = None
 
 
 def _build_system_prompt(doc_text: Optional[str], doc_name: Optional[str]) -> str:
@@ -161,24 +167,42 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             doc_text = doc.extracted_text
             doc_name = doc.original_filename
 
-    system_prompt = _build_system_prompt(doc_text, doc_name)
+    retrieved = await _retrieve_academic_context(db, request)
+    system_prompt = _build_tutor_prompt(doc_text, doc_name, request, retrieved)
+    sources = retrieved.get("sources") if retrieved else None
 
-    # Try Gemini if API key is set
+    from app.services.llm import generate_text, provider_status
+    status = provider_status()
+    if status.get("configured"):
+        try:
+            result = generate_text(
+                _user_prompt(request),
+                system=system_prompt,
+            )
+            if result.get("provider") != "fallback" or not GEMINI_API_KEY:
+                return ChatResponse(reply=result["text"], model=result.get("provider") or "llm", sources=sources)
+        except Exception as e:
+            print(f"LLM error: {e}")
+
     if GEMINI_API_KEY and GEMINI_API_KEY != "your_gemini_api_key_here":
         try:
-            # Try SDK first, then REST
             try:
                 reply = await _async_gemini(system_prompt, request.history or [], request.message)
             except Exception:
                 reply = _call_gemini_rest(system_prompt, request.history or [], request.message)
-            return ChatResponse(reply=reply, model="gemini-1.5-flash")
+            return ChatResponse(reply=reply, model="gemini-1.5-flash", sources=sources)
         except Exception as e:
-            # Fall through to fallback
             print(f"Gemini error: {e}")
 
-    # Fallback: rule-based response
     reply = _fallback_response(request.message, doc_text)
-    return ChatResponse(reply=reply, model="fallback")
+    if retrieved and retrieved.get("chunks"):
+        snippets = "\n\n".join((c.get("text") or "")[:400] for c in retrieved["chunks"][:2])
+        reply = (
+            "I don't have an LLM provider configured, so this answer is grounded only in retrieved study material:\n\n"
+            f"{snippets}\n\n"
+            + reply
+        )
+    return ChatResponse(reply=reply, model="fallback", sources=sources)
 
 
 async def _async_gemini(system_prompt: str, history: List[ChatMessage], message: str) -> str:
@@ -187,3 +211,71 @@ async def _async_gemini(system_prompt: str, history: List[ChatMessage], message:
     return await asyncio.get_event_loop().run_in_executor(
         None, _call_gemini_rest, system_prompt, history, message
     )
+
+
+def _user_prompt(request: ChatRequest) -> str:
+    action = (request.action or "").lower()
+    guides = {
+        "explain": "Explain the concept clearly.",
+        "simplify": "Simplify the explanation for a beginner.",
+        "example": "Give a worked example.",
+        "hint": "Give a hint, not the full solution.",
+        "test": "Ask one short test question.",
+        "similar": "Give a similar practice question from the retrieved PYQs if available.",
+        "mistake": "Explain the likely mistake without inventing facts.",
+    }
+    extra = guides.get(action, "")
+    return f"{extra}\n\nStudent question: {request.message}".strip()
+
+
+def _build_tutor_prompt(doc_text, doc_name, request: ChatRequest, retrieved: dict) -> str:
+    base = (
+        "You are LexiMind AI Tutor. Answer using ONLY the retrieved academic context when it is present. "
+        "If the context is insufficient, say so. Never invent PYQ years, marks, or sources. "
+        "Cite page numbers when available."
+    )
+    profile = []
+    if request.education_level:
+        profile.append(f"education level: {request.education_level}")
+    if request.course:
+        profile.append(f"course: {request.course}")
+    if request.subject_id:
+        profile.append(f"subject: {request.subject_id}")
+    if request.concept_id:
+        profile.append(f"concept: {request.concept_id}")
+    if profile:
+        base += "\nStudent context: " + ", ".join(profile)
+    if doc_text:
+        excerpt = doc_text[:4000]
+        base += f"\n\nActive document '{doc_name}':\n{excerpt}"
+    if retrieved:
+        for ch in (retrieved.get("chunks") or [])[:5]:
+            page = ch.get("page_number")
+            base += f"\n\n[notes page {page}]\n{(ch.get('text') or '')[:800]}"
+        for q in (retrieved.get("pyqs") or [])[:4]:
+            year = q.get("year")
+            year_s = str(year) if year is not None else "unknown year"
+            base += f"\n\n[PYQ {year_s}]\n{(q.get('question_text') or '')[:500]}"
+        for c in (retrieved.get("concepts") or [])[:3]:
+            base += f"\n\n[concept] {c.get('canonical_name') or c.get('name')}"
+    return base
+
+
+async def _retrieve_academic_context(db: AsyncSession, request: ChatRequest) -> dict:
+    try:
+        from sqlalchemy import select as sel
+        from app.models.academic import DocumentChunk, Question, AcademicConcept
+        from app.services.embeddings import RetrievalService
+        chunks = (await db.execute(sel(DocumentChunk).limit(300))).scalars().all()
+        questions = (await db.execute(sel(Question).where(Question.source.in_(["PYQ", "DEMO", "UPLOADED"])).limit(150))).scalars().all()
+        concepts = (await db.execute(sel(AcademicConcept).limit(150))).scalars().all()
+        svc = RetrievalService()
+        return svc.retrieve_context(
+            request.message,
+            chunks=[{"id": c.id, "document_id": c.document_id, "page_number": c.page_number, "section": c.section, "text": c.text, "subject_id": c.subject_id, "concept_id": c.concept_id} for c in chunks],
+            questions=[{"question_text": q.question_text, "year": q.year, "source": q.source, "concept_id": q.concept_id} for q in questions],
+            concepts=[{"canonical_name": c.canonical_name, "slug": c.slug, "name": c.canonical_name} for c in concepts],
+            filters={"subject_id": request.subject_id, "concept_id": request.concept_id},
+        )
+    except Exception:
+        return {}

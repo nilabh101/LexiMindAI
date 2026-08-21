@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Send, Bot, User, Loader2, Zap } from "lucide-react";
-import { sendChatMessage } from "../../lib/api";
+import { sendTutorMessage } from "../../lib/api";
 import type { ChatMessage } from "../../lib/api";
 import { loadUser } from "../../store/userStore";
-import { DEMO_USER } from "../../data/demoData";
 import { SUBJECTS } from "../../data/curriculum";
 
 const QUICK_ACTIONS = [
@@ -15,13 +14,13 @@ const QUICK_ACTIONS = [
 ];
 
 export function TutorPage() {
-  const user = loadUser() ?? DEMO_USER;
-  const subjects = SUBJECTS.filter(s => user.academicProfile?.subjectIds.includes(s.id));
+  const user = loadUser();
+  const subjects = SUBJECTS.filter(s => user?.academicProfile?.subjectIds.includes(s.id));
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: `Hi ${user.name.split(" ")[0]}! I'm your LexiMind AI Tutor. I'm aware of your curriculum — you're currently studying ${subjects[0]?.name ?? "your subjects"}.\n\nAsk me to explain a concept, give you examples, simplify a topic, or test your understanding!`,
+      content: `Hi ${user?.name?.split(" ")[0] ?? "there"}! I'm your LexiMind AI Tutor. I'll use retrieved notes and PYQs from your library when they exist.\n\nAsk me to explain a concept, give you examples, simplify a topic, or test your understanding!`,
     },
   ]);
   const [input, setInput] = useState("");
@@ -40,8 +39,24 @@ export function TutorPage() {
     setMessages(p => [...p, { role: "user", content: msg }]);
     setLoading(true);
     try {
-      const res = await sendChatMessage(msg, docId, messages.slice(-6));
-      setMessages(p => [...p, { role: "assistant", content: res.data.reply }]);
+      const res = await sendTutorMessage(msg, {
+        docId,
+        history: messages.slice(-6),
+        subjectId: subjects[0]?.id,
+        educationLevel: user?.academicProfile?.educationLevel,
+        course: user?.academicProfile?.courseId,
+      });
+      const sources = res.data.sources;
+      let reply = res.data.reply;
+      if (sources?.length) {
+        const cites = sources
+          .filter((s: any) => s.page != null)
+          .slice(0, 3)
+          .map((s: any) => `p.${s.page}`)
+          .join(", ");
+        if (cites) reply += `\n\nSources: ${cites}`;
+      }
+      setMessages(p => [...p, { role: "assistant", content: reply }]);
     } catch {
       setMessages(p => [...p, { role: "assistant", content: "Sorry, I couldn't reach the AI service. Please try again." }]);
     } finally {

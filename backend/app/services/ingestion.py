@@ -123,6 +123,132 @@ def _extract_pdf(path: Path) -> str:
     )
 
 
+def extract_structured_pages(file_path: Path, ext: str) -> dict:
+    """Extract page-aware content. Never fabricates page numbers.
+
+    Returns:
+      {
+        "pages": [{"page": int, "raw_text": str, "blocks": [...]}],
+        "raw_text": str,
+        "error": optional str,
+      }
+    """
+    if ext == "pdf":
+        return _extract_pdf_pages(file_path)
+    if ext == "txt":
+        text = _extract_txt(file_path)
+        return {
+            "pages": [{"page": 1, "raw_text": text, "blocks": _blocks_from_plain(text)}],
+            "raw_text": text,
+        }
+    if ext == "docx":
+        text = _extract_docx(file_path)
+        return {
+            "pages": [{"page": 1, "raw_text": text, "blocks": _blocks_from_plain(text)}],
+            "raw_text": text,
+        }
+    raise HTTPException(status_code=400, detail=f"Unsupported extension: {ext}")
+
+
+def _blocks_from_plain(text: str) -> list:
+    blocks = []
+    for para in text.split("\n"):
+        stripped = para.strip()
+        if not stripped:
+            continue
+        kind = "heading" if _looks_like_heading(stripped) else "paragraph"
+        blocks.append({"type": kind, "text": stripped})
+    return blocks or [{"type": "paragraph", "text": text.strip()}] if text.strip() else []
+
+
+def _looks_like_heading(line: str) -> bool:
+    if len(line) > 90:
+        return False
+    if line.isupper() and len(line.split()) <= 12:
+        return True
+    if line[:1].isdigit() and ("chapter" in line.lower() or len(line.split()) <= 10):
+        return True
+    lowered = line.lower()
+    if lowered.startswith(("chapter ", "unit ", "topic ", "section ", "module ")):
+        return True
+    return False
+
+
+def _extract_pdf_pages(path: Path) -> dict:
+    pages = []
+    errors = []
+
+    try:
+        import fitz
+        doc = fitz.open(str(path))
+        for i, page in enumerate(doc):
+            page_no = i + 1
+            raw = page.get_text("text") or ""
+            blocks = _blocks_from_pymupdf(page)
+            pages.append({"page": page_no, "raw_text": raw, "blocks": blocks})
+        doc.close()
+        raw_text = "\n\n".join(p["raw_text"] for p in pages)
+        return {"pages": pages, "raw_text": raw_text}
+    except Exception as exc:
+        errors.append(f"PyMuPDF: {exc}")
+
+    try:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(str(path))
+        for i, page in enumerate(reader.pages):
+            raw = page.extract_text() or ""
+            pages.append({
+                "page": i + 1,
+                "raw_text": raw,
+                "blocks": _blocks_from_plain(raw),
+            })
+        raw_text = "\n\n".join(p["raw_text"] for p in pages)
+        return {"pages": pages, "raw_text": raw_text}
+    except Exception as exc:
+        errors.append(f"PyPDF2: {exc}")
+
+    return {
+        "pages": [],
+        "raw_text": "",
+        "error": "; ".join(errors) if errors else "PDF extraction failed",
+    }
+
+
+def _blocks_from_pymupdf(page) -> list:
+    blocks = []
+    try:
+        data = page.get_text("dict")
+        sizes = []
+        for b in data.get("blocks", []):
+            for line in b.get("lines", []):
+                for span in line.get("spans", []):
+                    if span.get("size"):
+                        sizes.append(span["size"])
+        median = sorted(sizes)[len(sizes) // 2] if sizes else 11
+        for b in data.get("blocks", []):
+            texts = []
+            max_size = 0
+            flags = 0
+            for line in b.get("lines", []):
+                line_text = "".join(span.get("text", "") for span in line.get("spans", []))
+                if line_text.strip():
+                    texts.append(line_text.strip())
+                for span in line.get("spans", []):
+                    max_size = max(max_size, span.get("size") or 0)
+                    flags |= span.get("flags") or 0
+            text = " ".join(texts).strip()
+            if not text:
+                continue
+            is_heading = max_size >= median + 1.5 or (flags & 16 and len(text) < 90)
+            if not is_heading:
+                is_heading = _looks_like_heading(text)
+            blocks.append({"type": "heading" if is_heading else "paragraph", "text": text})
+    except Exception:
+        raw = page.get_text("text") or ""
+        return _blocks_from_plain(raw)
+    return blocks
+
+
 # ─── DOCX ─────────────────────────────────────────────────────────────────────
 
 def _extract_docx(path: Path) -> str:

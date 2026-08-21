@@ -6,62 +6,50 @@ import {
   RotateCcw, Trophy, ArrowRight, Clock
 } from "lucide-react";
 import { loadUser } from "../../store/userStore";
-import { DEMO_USER } from "../../data/demoData";
-import { getSubjectsByCourse, CONCEPTS } from "../../data/curriculum";
-
-// Simple inline quiz experience without the old QuizPage complexity
-const SAMPLE_QUESTIONS = [
-  {
-    id: "q1",
-    conceptId: "euler-theorem-dc",
-    question: "If f(x, y) = x³ + y³ + 3x²y, what is the degree of homogeneity?",
-    options: ["2", "3", "4", "1"],
-    answer: "3",
-    explanation: "f(tx, ty) = t³x³ + t³y³ + 3t³x²y = t³f(x,y). So degree = 3.",
-    difficulty: "medium",
-  },
-  {
-    id: "q2",
-    conceptId: "euler-theorem-dc",
-    question: "Euler's theorem states: if f is homogeneous of degree n, then:",
-    options: [
-      "x·∂f/∂x + y·∂f/∂y = n·f",
-      "x·∂f/∂x · y·∂f/∂y = n·f",
-      "∂f/∂x + ∂f/∂y = n",
-      "x + y = n·f",
-    ],
-    answer: "x·∂f/∂x + y·∂f/∂y = n·f",
-    explanation: "This is the direct statement of Euler's theorem for homogeneous functions of degree n.",
-    difficulty: "easy",
-  },
-  {
-    id: "q3",
-    conceptId: "partial-derivatives-dc",
-    question: "For f(x,y) = x²y + y³, find ∂f/∂x:",
-    options: ["2xy", "2xy + y³", "x² + 3y²", "2x + 3y²"],
-    answer: "2xy",
-    explanation: "Differentiate with respect to x, treating y as constant: ∂/∂x(x²y) = 2xy, ∂/∂x(y³) = 0.",
-    difficulty: "easy",
-  },
-];
+import { getSubjectsByCourse } from "../../data/curriculum";
+import { generateQuiz, completeQuiz } from "../../lib/api";
 
 type QuizState = "setup" | "taking" | "results";
 
 export function QuizzesPage() {
-  const user = loadUser() ?? DEMO_USER;
-  const subjects = getSubjectsByCourse(user.academicProfile?.courseId ?? "");
+  const user = loadUser();
+  const [searchParams] = useSearchParams();
+  const conceptId = searchParams.get("concept") || "euler-theorem-dc";
+  const subjects = getSubjectsByCourse(user?.academicProfile?.courseId ?? "");
 
   const [quizState, setQuizState] = useState<QuizState>("setup");
   const [currentQ, setCurrentQ] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [showExpl, setShowExpl] = useState(false);
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [quizId, setQuizId] = useState("quiz");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const q = SAMPLE_QUESTIONS[currentQ];
+  const q = questions[currentQ];
   const answered = answers[currentQ] !== undefined;
-  const isCorrect = answered && answers[currentQ] === q.answer;
+  const isCorrect = answered && q && (q.answer ? answers[currentQ] === q.answer : false);
 
-  const score = SAMPLE_QUESTIONS.filter((q, i) => answers[i] === q.answer).length;
-  const pct = Math.round((score / SAMPLE_QUESTIONS.length) * 100);
+  const score = questions.filter((qq, i) => qq.answer && answers[i] === qq.answer).length;
+  const gradable = questions.filter(qq => qq.answer).length;
+  const pct = gradable ? Math.round((score / gradable) * 100) : 0;
+
+  const startQuiz = async () => {
+    setLoadError(null);
+    try {
+      const res = await generateQuiz({ concept_id: conceptId, question_count: 5 });
+      const qs = res.data.questions || [];
+      setQuestions(qs);
+      setQuizId(res.data.quiz_id || "quiz");
+      if (!qs.length) {
+        setLoadError("No questions in the bank for this concept yet. Upload notes or a PYQ PDF first.");
+        return;
+      }
+      setQuizState("taking");
+    } catch (e: any) {
+      setLoadError(e?.message || "Could not generate quiz");
+    }
+  };
 
   const pick = (opt: string) => {
     if (answered) return;
@@ -69,10 +57,33 @@ export function QuizzesPage() {
     setShowExpl(true);
   };
 
+  const finish = async () => {
+    setQuizState("results");
+    if (!user?.id) return;
+    setSaving(true);
+    try {
+      await completeQuiz({
+        user_id: user.id,
+        quiz_id: quizId,
+        subject_id: "em1-btech",
+        answers: questions.map((qq, i) => ({
+          question_id: qq.id,
+          selected_answer: answers[i],
+          correct: qq.answer ? answers[i] === qq.answer : false,
+          concept_id: qq.concept_id,
+        })),
+      });
+    } catch {
+      // results still shown locally
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const nextQ = () => {
     setShowExpl(false);
-    if (currentQ < SAMPLE_QUESTIONS.length - 1) setCurrentQ(c => c + 1);
-    else setQuizState("results");
+    if (currentQ < questions.length - 1) setCurrentQ(c => c + 1);
+    else finish();
   };
 
   const reset = () => { setQuizState("setup"); setCurrentQ(0); setAnswers({}); setShowExpl(false); };
@@ -96,12 +107,13 @@ export function QuizzesPage() {
                   <div className="text-slate-400 text-sm">Engineering Mathematics I · 3 questions</div>
                 </div>
               </div>
-              <p className="text-slate-400 text-sm mb-6">Practice questions on Euler's theorem for homogeneous functions.</p>
+              <p className="text-slate-400 text-sm mb-6">Questions come from your uploaded PYQs and the question bank. Demo items are labeled DEMO.</p>
               <div className="flex gap-4 text-sm text-slate-400 mb-6">
-                <span className="flex items-center gap-1.5"><Zap size={13} /> 3 Questions</span>
+                <span className="flex items-center gap-1.5"><Zap size={13} /> From question bank</span>
                 <span className="flex items-center gap-1.5"><Clock size={13} /> ~5 min</span>
               </div>
-              <button onClick={() => setQuizState("taking")}
+              {loadError && <p className="text-sm text-red-300 mb-4">{loadError}</p>}
+              <button onClick={startQuiz}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all">
                 Start Quiz <ArrowRight size={15} />
               </button>
@@ -127,9 +139,9 @@ export function QuizzesPage() {
             {/* Progress */}
             <div className="flex items-center gap-3 mb-6">
               <div className="flex-1 bg-white/8 rounded-full h-2">
-                <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${((currentQ + 1) / SAMPLE_QUESTIONS.length) * 100}%` }} />
+                <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${((currentQ + 1) / Math.max(questions.length, 1)) * 100}%` }} />
               </div>
-              <span className="text-sm text-slate-400 shrink-0">{currentQ + 1}/{SAMPLE_QUESTIONS.length}</span>
+              <span className="text-sm text-slate-400 shrink-0">{currentQ + 1}/{questions.length}</span>
             </div>
 
             <AnimatePresence mode="wait">
@@ -137,14 +149,23 @@ export function QuizzesPage() {
                 className="bg-white/3 border border-white/6 rounded-3xl p-7">
                 <div className="mb-6">
                   <span className={`text-xs px-2.5 py-1 rounded-full border mr-2 ${
-                    q.difficulty === "easy" ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/20" :
+                    q?.difficulty === "easy" || q?.difficulty === "EASY" ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/20" :
                     "bg-amber-500/15 text-amber-300 border-amber-500/20"
-                  }`}>{q.difficulty}</span>
-                  <p className="text-white font-semibold text-base leading-relaxed mt-3">{q.question}</p>
+                  }`}>{q?.difficulty || "unknown"}</span>
+                  {q?.source && <span className="text-xs px-2.5 py-1 rounded-full border border-white/10 text-slate-400">{q.source}</span>}
+                  <p className="text-white font-semibold text-base leading-relaxed mt-3">{q?.question}</p>
                 </div>
 
                 <div className="space-y-2.5">
-                  {q.options.map((opt, i) => {
+                  {(q?.options || []).length === 0 && (
+                    <input
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none"
+                      placeholder={q?.answer ? "Type your answer" : "No answer key stored — mark as reviewed to continue"}
+                      value={answers[currentQ] || ""}
+                      onChange={e => setAnswers(p => ({ ...p, [currentQ]: e.target.value }))}
+                    />
+                  )}
+                  {(q?.options || []).map((opt: string, i: number) => {
                     let cls = "border-white/8 bg-white/3 hover:bg-white/8 text-slate-200";
                     if (answered) {
                       if (opt === q.answer) cls = "border-emerald-500/50 bg-emerald-500/15 text-emerald-200";
@@ -181,9 +202,9 @@ export function QuizzesPage() {
                     disabled={currentQ === 0} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 disabled:opacity-30 transition-all">
                     <ChevronLeft size={15} /> Back
                   </button>
-                  <button onClick={nextQ} disabled={!answered}
+                  <button onClick={nextQ} disabled={!answered && (q?.options || []).length > 0}
                     className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition-all">
-                    {currentQ === SAMPLE_QUESTIONS.length - 1 ? <><Trophy size={14} /> Finish</> : <>Next <ChevronRight size={14} /></>}
+                    {currentQ === questions.length - 1 ? <><Trophy size={14} /> Finish</> : <>Next <ChevronRight size={14} /></>}
                   </button>
                 </div>
               </motion.div>
@@ -202,7 +223,7 @@ export function QuizzesPage() {
               <div className="text-white text-xl font-semibold mb-1">
                 {pct >= 90 ? "Excellent!" : pct >= 75 ? "Good job!" : pct >= 60 ? "Keep going!" : "Needs practice"}
               </div>
-              <div className="text-slate-400">{score}/{SAMPLE_QUESTIONS.length} correct</div>
+              <div className="text-slate-400">{score}/{gradable} scored{saving ? " · saving…" : ""}</div>
               <div className="flex gap-3 justify-center mt-6">
                 <button onClick={reset} className="flex items-center gap-2 text-sm text-slate-400 hover:text-white bg-white/5 px-5 py-2.5 rounded-xl transition-all"><RotateCcw size={13} /> Retry</button>
                 <Link to="/app/learning-path" className="flex items-center gap-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl transition-all">
@@ -213,18 +234,19 @@ export function QuizzesPage() {
 
             {/* Review */}
             <div className="space-y-3">
-              {SAMPLE_QUESTIONS.map((q, i) => {
-                const correct = answers[i] === q.answer;
+              {questions.map((qq, i) => {
+                const correct = qq.answer ? answers[i] === qq.answer : false;
                 return (
                   <div key={i} className="bg-white/3 border border-white/6 rounded-xl p-4">
                     <div className="flex items-start gap-3">
                       {correct ? <CheckCircle size={15} className="text-emerald-400 mt-0.5 shrink-0" /> : <XCircle size={15} className="text-red-400 mt-0.5 shrink-0" />}
                       <div>
-                        <p className="text-sm text-white font-medium mb-1">{q.question}</p>
+                        <p className="text-sm text-white font-medium mb-1">{qq.question}</p>
                         <div className="text-xs space-y-1">
+                          <div className="text-slate-500">{qq.source}{qq.is_demo ? " · DEMO" : ""}</div>
                           {!correct && <div><span className="text-slate-500">Your answer: </span><span className="text-red-400">{answers[i] ?? "—"}</span></div>}
-                          <div><span className="text-slate-500">Correct: </span><span className="text-emerald-400">{q.answer}</span></div>
-                          <div className="mt-1.5 p-2 bg-white/5 rounded-lg text-slate-400">{q.explanation}</div>
+                          <div><span className="text-slate-500">Correct: </span><span className="text-emerald-400">{qq.answer ?? "unknown"}</span></div>
+                          {qq.explanation && <div className="mt-1.5 p-2 bg-white/5 rounded-lg text-slate-400">{qq.explanation}</div>}
                         </div>
                       </div>
                     </div>

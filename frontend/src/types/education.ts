@@ -183,7 +183,8 @@ export interface Note {
   updatedAt: string;
 }
 
-export type DocumentStatus = "uploaded" | "processing" | "ready" | "failed";
+export type DocumentStatus = "uploaded" | "processing" | "ready" | "failed" | "needs_review";
+export type AcademicDocumentType = "STUDY_NOTES" | "PYQ" | "QUESTION_BANK" | "REFERENCE" | "UNKNOWN";
 
 export interface LibraryDocument {
   id: string;
@@ -192,8 +193,12 @@ export interface LibraryDocument {
   fileSize: number;
   uploadedAt: string;
   subjectId?: string;
+  subject?: string;
   courseId?: string;
+  documentType?: AcademicDocumentType | string;
   status: DocumentStatus;
+  errorMessage?: string | null;
+  ocrRequired?: boolean;
   extractedNoteId?: string;
 }
 

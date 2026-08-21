@@ -164,3 +164,97 @@ export const downloadReport = (id: number) =>
   api.get(`/reports/${id}/pdf`, {
     responseType: "blob",
   });
+
+// =====================
+// PHASE 2 ACADEMIC
+// =====================
+
+export function mapDocStatus(status?: string): "uploaded" | "processing" | "ready" | "failed" | "needs_review" {
+  const s = (status || "").toUpperCase();
+  if (s === "UPLOADED") return "uploaded";
+  if (s === "PROCESSING") return "processing";
+  if (s === "READY") return "ready";
+  if (s === "FAILED") return "failed";
+  if (s === "NEEDS_REVIEW") return "needs_review";
+  return (status as any) || "uploaded";
+}
+
+export const uploadLibraryDocument = (file: File, meta: Record<string, string>) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  Object.entries(meta).forEach(([k, v]) => {
+    if (v) fd.append(k, v);
+  });
+  fd.append("process", "true");
+  return api.post("/documents/upload", fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+};
+
+export const retryDocument = (id: number) => api.post(`/documents/${id}/retry`);
+
+export const getDocumentDetail = (id: number) => api.get(`/documents/${id}/detail`);
+
+export const searchAcademic = (q: string) => api.get("/search", { params: { q } });
+
+export const listAcademicNotes = (params?: { subject_id?: string; concept_id?: string }) =>
+  api.get("/notes", { params });
+
+export const getAcademicNote = (id: number) => api.get(`/notes/${id}`);
+
+export const listQuestions = (params?: { subject_id?: string; concept_id?: string; pyq_only?: boolean; source?: string }) =>
+  api.get("/questions", { params });
+
+export const generateQuiz = (body: {
+  subject_id?: string;
+  chapter_id?: string;
+  concept_id?: string;
+  difficulty?: string;
+  question_count?: number;
+  question_type?: string;
+}) => api.post("/quizzes/generate", body);
+
+export const completeQuiz = (body: {
+  user_id: string;
+  quiz_id: string;
+  subject_id?: string;
+  answers: Array<{
+    question_id: number | string;
+    selected_answer?: string;
+    correct?: boolean;
+    time_taken?: number;
+    concept_id?: string;
+  }>;
+}) => api.post("/quizzes/complete", body);
+
+export const getLearningPathApi = (userId: string, subjectId: string) =>
+  api.get(`/learning/learning-path/${userId}/${subjectId}`);
+
+export const getProgressApi = (userId: string) => api.get(`/learning/progress/${userId}`);
+
+export const getMasteryApi = (userId: string) => api.get(`/learning/mastery/${userId}`);
+
+export const getAiStatus = () => api.get("/ai/status");
+
+export const sendTutorMessage = (
+  message: string,
+  extra: {
+    docId?: number | null;
+    history?: ChatMessage[];
+    subjectId?: string;
+    conceptId?: string;
+    educationLevel?: string;
+    course?: string;
+    action?: string;
+  } = {}
+) =>
+  api.post("/chat", {
+    message,
+    doc_id: extra.docId ?? null,
+    history: extra.history ?? [],
+    subject_id: extra.subjectId,
+    concept_id: extra.conceptId,
+    education_level: extra.educationLevel,
+    course: extra.course,
+    action: extra.action,
+  });

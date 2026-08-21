@@ -14,8 +14,22 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 60
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:5174"
 
-    # AI Chatbot (optional — falls back to rule-based if not set)
+    # LLM providers (never expose to frontend)
+    LLM_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    HF_TOKEN: str = ""
+    HF_MODEL: str = "mistralai/Mistral-7B-Instruct-v0.2"
+
+    # Embeddings
+    EMBEDDING_PROVIDER: str = "tfidf"
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    OCR_ENABLED: str = "auto"
+    OCR_TEXT_THRESHOLD: int = 80
 
     @property
     def allowed_extensions_list(self) -> List[str]:

@@ -11,6 +11,9 @@ from app.api import documents, analysis
 from app.api.chat import router as chat_router
 from app.api.education import router as education_router
 from app.api.learning import router as learning_router
+from app.api.academic import router as academic_router
+from app.api.quizzes import router as quizzes_router
+from app.api.ai import router as ai_router
 
 
 @asynccontextmanager
@@ -53,6 +56,17 @@ app.include_router(analysis.router,   prefix="/api")
 app.include_router(chat_router,       prefix="/api")
 app.include_router(education_router,  prefix="/api")
 app.include_router(learning_router,   prefix="/api")
+app.include_router(academic_router,   prefix="/api")
+app.include_router(quizzes_router,    prefix="/api")
+app.include_router(ai_router,         prefix="/api")
+
+
+@app.get("/api/learning-path")
+async def learning_path_alias(user_id: str = "demo-user-1", subject_id: str = "em1-btech"):
+    from app.api.learning import get_learning_path
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as session:
+        return await get_learning_path(user_id, subject_id, session)
 
 
 @app.get("/")
