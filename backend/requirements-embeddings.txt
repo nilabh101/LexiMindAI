@@ -1,0 +1,6 @@
+# Optional: neural sentence embeddings for retrieval.
+# Only required when EMBEDDING_PROVIDER=huggingface (default is "tfidf",
+# which needs nothing beyond requirements.txt).
+sentence-transformers>=2.7
+transformers>=4.41
+torch>=2.3

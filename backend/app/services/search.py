@@ -1,11 +1,12 @@
 """Keyword search across academic entities."""
-from typing import Dict, List
+from typing import Dict, List, Optional
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
 from app.models.academic import AcademicConcept, Question, AcademicNote, DocumentChunk
 from app.api.education import SUBJECTS, CHAPTERS, CONCEPTS
+from app.services.ownership import exclude_foreign, foreign_document_ids
 
 
 def _match(q: str, *fields) -> bool:
@@ -15,7 +16,25 @@ def _match(q: str, *fields) -> bool:
     return any(n in (f or "").lower() for f in fields)
 
 
-async def search_all(db: AsyncSession, query: str, limit: int = 20) -> Dict:
+def _dedupe_by_id(items: List[Dict]) -> List[Dict]:
+    """Curriculum and extracted concepts can share a slug — keep the first."""
+    seen = set()
+    out = []
+    for item in items:
+        key = item.get("id")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+async def search_all(
+    db: AsyncSession,
+    query: str,
+    limit: int = 20,
+    viewer: Optional[str] = None,
+) -> Dict:
     q = (query or "").strip()
     subjects = [s for s in SUBJECTS if _match(q, s.get("name"), s.get("shortName"), s.get("id"), s.get("description"))]
     chapters = [c for c in CHAPTERS if _match(q, c.get("name"), c.get("id"), c.get("description"))]
@@ -38,8 +57,12 @@ async def search_all(db: AsyncSession, query: str, limit: int = 20) -> Dict:
             for c in r.scalars().all()
         ]
         r = await db.execute(
-            select(AcademicNote).where(
-                or_(AcademicNote.title.ilike(like), AcademicNote.content.ilike(like), AcademicNote.summary.ilike(like))
+            exclude_foreign(
+                select(AcademicNote).where(
+                    or_(AcademicNote.title.ilike(like), AcademicNote.content.ilike(like), AcademicNote.summary.ilike(like))
+                ),
+                AcademicNote.source_document_id,
+                viewer,
             ).limit(limit)
         )
         notes = [
@@ -47,7 +70,11 @@ async def search_all(db: AsyncSession, query: str, limit: int = 20) -> Dict:
             for n in r.scalars().all()
         ]
         r = await db.execute(
-            select(Question).where(Question.question_text.ilike(like)).limit(limit)
+            exclude_foreign(
+                select(Question).where(Question.question_text.ilike(like)),
+                Question.document_id,
+                viewer,
+            ).limit(limit)
         )
         questions = [
             {"id": qn.id, "question": qn.question_text, "source": qn.source, "year": qn.year, "conceptId": qn.concept_id, "isDemo": qn.is_demo}
@@ -55,7 +82,8 @@ async def search_all(db: AsyncSession, query: str, limit: int = 20) -> Dict:
         ]
         r = await db.execute(
             select(Document).where(
-                or_(Document.original_filename.ilike(like), Document.subject.ilike(like), Document.extracted_text.ilike(like))
+                or_(Document.original_filename.ilike(like), Document.subject.ilike(like), Document.extracted_text.ilike(like)),
+                Document.id.notin_(foreign_document_ids(viewer)),
             ).limit(limit)
         )
         documents = [
@@ -63,7 +91,11 @@ async def search_all(db: AsyncSession, query: str, limit: int = 20) -> Dict:
             for d in r.scalars().all()
         ]
         r = await db.execute(
-            select(DocumentChunk).where(DocumentChunk.text.ilike(like)).limit(limit)
+            exclude_foreign(
+                select(DocumentChunk).where(DocumentChunk.text.ilike(like)),
+                DocumentChunk.document_id,
+                viewer,
+            ).limit(limit)
         )
         chunks = [
             {"id": c.id, "documentId": c.document_id, "page": c.page_number, "section": c.section, "snippet": (c.text or "")[:240]}
@@ -74,7 +106,7 @@ async def search_all(db: AsyncSession, query: str, limit: int = 20) -> Dict:
         "query": q,
         "subjects": subjects[:limit],
         "chapters": chapters[:limit],
-        "concepts": (concepts_static + db_concepts)[:limit],
+        "concepts": _dedupe_by_id(concepts_static + db_concepts)[:limit],
         "notes": notes,
         "questions": questions,
         "documents": documents,

@@ -60,15 +60,40 @@ _DOCUMENT_NEW_COLUMNS = [
 ]
 
 
+# Phase 3 adaptive columns added to existing Phase 2 tables.
+_CONCEPT_MASTERY_NEW_COLUMNS = [
+    ("questions_incorrect", "INTEGER DEFAULT 0"),
+    ("last_correct_at", "DATETIME"),
+    ("streak", "INTEGER DEFAULT 0"),
+    ("state", "VARCHAR(30) DEFAULT 'NOT_STARTED'"),
+    ("subject_id", "VARCHAR(80)"),
+    ("next_review_at", "DATETIME"),
+    ("review_interval_days", "INTEGER"),
+    ("updated_at", "DATETIME"),
+]
+
+_QUIZ_ANSWER_NEW_COLUMNS = [
+    ("correct_answer", "TEXT"),
+    ("difficulty", "VARCHAR(20)"),
+]
+
+_NEW_COLUMNS_BY_TABLE = {
+    "documents": _DOCUMENT_NEW_COLUMNS,
+    "concept_mastery": _CONCEPT_MASTERY_NEW_COLUMNS,
+    "quiz_answers": _QUIZ_ANSWER_NEW_COLUMNS,
+}
+
+
 def _migrate_sqlite(sync_conn):
     inspector = inspect(sync_conn)
-    tables = inspector.get_table_names()
-    if "documents" not in tables:
-        return
-    cols = {c["name"] for c in inspector.get_columns("documents")}
-    for name, ddl in _DOCUMENT_NEW_COLUMNS:
-        if name not in cols:
-            sync_conn.execute(text(f"ALTER TABLE documents ADD COLUMN {name} {ddl}"))
+    tables = set(inspector.get_table_names())
+    for table, new_columns in _NEW_COLUMNS_BY_TABLE.items():
+        if table not in tables:
+            continue
+        cols = {c["name"] for c in inspector.get_columns(table)}
+        for name, ddl in new_columns:
+            if name not in cols:
+                sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
 async def init_db():

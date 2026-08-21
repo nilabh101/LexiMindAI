@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   Brain, LayoutDashboard, BookOpen, Layers, Map, Zap,
   FileText, StickyNote, Library, MessageCircle, TrendingUp,
-  User, LogOut, Menu, X
+  User, LogOut, Menu, X, Search
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "../lib/utils";
@@ -27,7 +27,15 @@ export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const user = loadUser();
+
+  const submitSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    navigate(`/app/search?q=${encodeURIComponent(query.trim())}`);
+    setSidebarOpen(false);
+  };
 
   const handleLogout = () => { clearUser(); navigate("/"); };
 
@@ -57,6 +65,20 @@ export function AppLayout() {
           </div>
         </div>
       )}
+
+      {/* Search */}
+      <form onSubmit={submitSearch} className="px-3 mt-3">
+        <div className="flex items-center gap-2 bg-white/5 border border-white/8 rounded-xl px-3">
+          <Search size={14} className="text-slate-500 shrink-0" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search"
+            aria-label="Search"
+            className="flex-1 bg-transparent py-2 text-sm text-white placeholder-slate-500 outline-none min-w-0"
+          />
+        </div>
+      </form>
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
@@ -97,7 +119,7 @@ export function AppLayout() {
     <div className="flex h-screen overflow-hidden bg-[#0a0a14]">
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r border-white/6 bg-[#0d0d1a]">
-        <SidebarContent />
+        {SidebarContent()}
       </aside>
 
       {/* Mobile sidebar overlay */}
@@ -109,7 +131,7 @@ export function AppLayout() {
             <button onClick={() => setSidebarOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X size={18} />
             </button>
-            <SidebarContent />
+            {SidebarContent()}
           </motion.div>
         </div>
       )}

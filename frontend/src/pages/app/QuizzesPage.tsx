@@ -7,14 +7,32 @@ import {
 } from "lucide-react";
 import { loadUser } from "../../store/userStore";
 import { getSubjectsByCourse } from "../../data/curriculum";
-import { generateQuiz, completeQuiz } from "../../lib/api";
+import { generateAdaptiveQuiz, completeQuiz } from "../../lib/api";
+import {
+  currentUserId, currentSubjectId, masteryColor, stateLabel,
+  type Recommendation,
+} from "../../services/adaptiveEngine";
 
 type QuizState = "setup" | "taking" | "results";
 
+interface AdaptivePlan {
+  conceptId?: string;
+  concept?: string;
+  mastery: number;
+  state?: string;
+  targetDifficulties: string[];
+  selectionReason: string;
+  prerequisiteNote?: string | null;
+  message?: string | null;
+  sourceCounts?: Record<string, number>;
+}
+
 export function QuizzesPage() {
   const user = loadUser();
+  const userId = currentUserId(user);
+  const subjectId = currentSubjectId(user);
   const [searchParams] = useSearchParams();
-  const conceptId = searchParams.get("concept") || "euler-theorem-dc";
+  const conceptId = searchParams.get("concept") || undefined;
   const subjects = getSubjectsByCourse(user?.academicProfile?.courseId ?? "");
 
   const [quizState, setQuizState] = useState<QuizState>("setup");
@@ -25,6 +43,9 @@ export function QuizzesPage() {
   const [quizId, setQuizId] = useState("quiz");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [plan, setPlan] = useState<AdaptivePlan | null>(null);
+  const [nextRecommendation, setNextRecommendation] = useState<Recommendation | null>(null);
 
   const q = questions[currentQ];
   const answered = answers[currentQ] !== undefined;
@@ -36,18 +57,38 @@ export function QuizzesPage() {
 
   const startQuiz = async () => {
     setLoadError(null);
+    setStarting(true);
     try {
-      const res = await generateQuiz({ concept_id: conceptId, question_count: 5 });
-      const qs = res.data.questions || [];
+      const res = await generateAdaptiveQuiz({
+        user_id: userId,
+        subject_id: subjectId,
+        concept_id: conceptId,
+        question_count: 5,
+      });
+      const d = res.data;
+      const qs = d.questions || [];
       setQuestions(qs);
-      setQuizId(res.data.quiz_id || "quiz");
+      setQuizId(d.quiz_id || "quiz");
+      setPlan({
+        conceptId: d.concept_id,
+        concept: d.concept,
+        mastery: d.mastery ?? 0,
+        state: d.state,
+        targetDifficulties: d.target_difficulties || [],
+        selectionReason: d.selection_reason || "",
+        prerequisiteNote: d.prerequisite_note,
+        message: d.message,
+        sourceCounts: d.source_counts,
+      });
       if (!qs.length) {
-        setLoadError("No questions in the bank for this concept yet. Upload notes or a PYQ PDF first.");
+        setLoadError(d.message || "No questions in the bank for this concept yet. Upload notes or a PYQ PDF first.");
         return;
       }
       setQuizState("taking");
     } catch (e: any) {
       setLoadError(e?.message || "Could not generate quiz");
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -59,13 +100,12 @@ export function QuizzesPage() {
 
   const finish = async () => {
     setQuizState("results");
-    if (!user?.id) return;
     setSaving(true);
     try {
-      await completeQuiz({
-        user_id: user.id,
+      const res = await completeQuiz({
+        user_id: userId,
         quiz_id: quizId,
-        subject_id: "em1-btech",
+        subject_id: subjectId,
         answers: questions.map((qq, i) => ({
           question_id: qq.id,
           selected_answer: answers[i],
@@ -73,8 +113,9 @@ export function QuizzesPage() {
           concept_id: qq.concept_id,
         })),
       });
-    } catch {
-      // results still shown locally
+      setNextRecommendation(res.data?.recommendation ?? null);
+    } catch (e: any) {
+      setLoadError(e?.message || "Your answers could not be saved.");
     } finally {
       setSaving(false);
     }
@@ -86,13 +127,18 @@ export function QuizzesPage() {
     else finish();
   };
 
-  const reset = () => { setQuizState("setup"); setCurrentQ(0); setAnswers({}); setShowExpl(false); };
+  const reset = () => {
+    setQuizState("setup"); setCurrentQ(0); setAnswers({}); setShowExpl(false);
+    setNextRecommendation(null); setLoadError(null);
+  };
 
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Quizzes</h1>
-        <p className="text-slate-400 text-sm mt-1">Test your understanding concept by concept.</p>
+        <h1 className="text-2xl font-bold text-white">Adaptive Quiz</h1>
+        <p className="text-slate-400 text-sm mt-1">
+          LexiMind picks the concept and difficulty from your mastery and recent answers.
+        </p>
       </div>
 
       <AnimatePresence mode="wait">
@@ -103,19 +149,34 @@ export function QuizzesPage() {
               <div className="flex items-center gap-4 mb-4">
                 <div className="w-14 h-14 rounded-2xl bg-indigo-600/30 flex items-center justify-center text-2xl">📐</div>
                 <div>
-                  <div className="font-bold text-white text-xl">Euler's Theorem</div>
-                  <div className="text-slate-400 text-sm">Engineering Mathematics I · 3 questions</div>
+                  <div className="font-bold text-white text-xl">
+                    {plan?.concept ?? "Personalised quiz"}
+                  </div>
+                  <div className="text-slate-400 text-sm">
+                    {plan
+                      ? `${stateLabel(plan.state || "")} · LexiMind Mastery Score ${plan.mastery}`
+                      : "The engine chooses your weakest ready concept."}
+                  </div>
                 </div>
               </div>
-              <p className="text-slate-400 text-sm mb-6">Questions come from your uploaded PYQs and the question bank. Demo items are labeled DEMO.</p>
+              <p className="text-slate-400 text-sm mb-4">
+                {plan?.selectionReason ||
+                  "Questions come from your uploaded PYQs and the question bank. Demo items are labeled DEMO."}
+              </p>
+              {plan?.prerequisiteNote && (
+                <p className="text-amber-300/90 text-sm mb-4">{plan.prerequisiteNote}</p>
+              )}
               <div className="flex gap-4 text-sm text-slate-400 mb-6">
                 <span className="flex items-center gap-1.5"><Zap size={13} /> From question bank</span>
                 <span className="flex items-center gap-1.5"><Clock size={13} /> ~5 min</span>
+                {plan?.targetDifficulties?.length ? (
+                  <span className="flex items-center gap-1.5">Target: {plan.targetDifficulties.join(" / ")}</span>
+                ) : null}
               </div>
               {loadError && <p className="text-sm text-red-300 mb-4">{loadError}</p>}
-              <button onClick={startQuiz}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all">
-                Start Quiz <ArrowRight size={15} />
+              <button onClick={startQuiz} disabled={starting}
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all">
+                {starting ? "Building your quiz…" : <>Start Adaptive Quiz <ArrowRight size={15} /></>}
               </button>
             </div>
 
@@ -136,6 +197,12 @@ export function QuizzesPage() {
         {/* Taking quiz */}
         {quizState === "taking" && (
           <motion.div key="taking" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            {(plan?.prerequisiteNote || plan?.message) && (
+              <p className="text-amber-300/90 text-sm mb-4 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
+                {plan?.prerequisiteNote || plan?.message}
+              </p>
+            )}
+
             {/* Progress */}
             <div className="flex items-center gap-3 mb-6">
               <div className="flex-1 bg-white/8 rounded-full h-2">
@@ -224,6 +291,19 @@ export function QuizzesPage() {
                 {pct >= 90 ? "Excellent!" : pct >= 75 ? "Good job!" : pct >= 60 ? "Keep going!" : "Needs practice"}
               </div>
               <div className="text-slate-400">{score}/{gradable} scored{saving ? " · saving…" : ""}</div>
+              {loadError && <p className="text-sm text-red-300 mt-2">{loadError}</p>}
+              {nextRecommendation && (
+                <Link to={`/app/concepts/${nextRecommendation.conceptId}`}
+                  className="block mt-6 text-left bg-white/4 border border-white/8 rounded-2xl p-4 hover:bg-white/6 transition-all">
+                  <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">Recommended next</div>
+                  <div className="text-white font-semibold text-sm">{nextRecommendation.title}</div>
+                  <div className="text-xs text-slate-400 mt-1">{nextRecommendation.reason}</div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    ~{nextRecommendation.estimatedMinutes} min · current mastery{" "}
+                    <span className={masteryColor(nextRecommendation.mastery)}>{nextRecommendation.mastery}%</span>
+                  </div>
+                </Link>
+              )}
               <div className="flex gap-3 justify-center mt-6">
                 <button onClick={reset} className="flex items-center gap-2 text-sm text-slate-400 hover:text-white bg-white/5 px-5 py-2.5 rounded-xl transition-all"><RotateCcw size={13} /> Retry</button>
                 <Link to="/app/learning-path" className="flex items-center gap-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl transition-all">

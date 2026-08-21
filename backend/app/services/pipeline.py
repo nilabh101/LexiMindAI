@@ -1,4 +1,5 @@
 """End-to-end academic document processing pipeline."""
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,8 @@ from app.services.difficulty import estimate_difficulty
 from app.services.ocr import maybe_ocr_pdf
 from app.api.education import CONCEPTS as CURRICULUM_CONCEPTS, CHAPTERS as CURRICULUM_CHAPTERS
 
+logger = logging.getLogger(__name__)
+
 
 async def process_document_by_id(doc_id: int) -> None:
     async with AsyncSessionLocal() as session:
@@ -33,6 +36,7 @@ async def process_document_by_id(doc_id: int) -> None:
             await run_pipeline(session, doc_id)
             await session.commit()
         except Exception as exc:
+            logger.exception("Document processing failed for document %s", doc_id)
             await session.rollback()
             async with AsyncSessionLocal() as err_session:
                 result = await err_session.execute(select(Document).where(Document.id == doc_id))

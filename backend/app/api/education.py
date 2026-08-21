@@ -134,6 +134,13 @@ CONCEPTS = [
         "keyPoints": ["Limit of a function as x→a","Left/right-hand limits","L'Hôpital's rule","Continuity"],
     },
     {
+        "id": "derivatives-dc", "name": "Derivatives",
+        "chapterId": "dc-em1", "subjectId": "em1-btech",
+        "difficulty": "beginner", "estimatedMinutes": 30, "prerequisites": ["limits-dc"],
+        "description": "Differentiation of single-variable functions and the standard rules.",
+        "keyPoints": ["Derivative as a limit","Product and quotient rules","Chain rule","Higher-order derivatives"],
+    },
+    {
         "id": "partial-derivatives-dc", "name": "Partial Derivatives",
         "chapterId": "dc-em1", "subjectId": "em1-btech",
         "difficulty": "intermediate", "estimatedMinutes": 40, "prerequisites": ["derivatives-dc"],
@@ -148,6 +155,14 @@ CONCEPTS = [
         "description": "Euler's theorem on homogeneous functions and its corollary.",
         "keyPoints": ["Homogeneous function definition","Euler's theorem formula","Deductions and corollary","Applications"],
         "formulaSummary": "x·(∂f/∂x) + y·(∂f/∂y) = n·f",
+    },
+    {
+        "id": "total-derivatives-dc", "name": "Total Derivatives",
+        "chapterId": "dc-em1", "subjectId": "em1-btech",
+        "difficulty": "intermediate", "estimatedMinutes": 40, "prerequisites": ["euler-theorem-dc"],
+        "description": "Total differential, chain rule for partial derivatives.",
+        "keyPoints": ["Total differential df","Chain rule for composite functions","Implicit differentiation","Applications to error analysis"],
+        "formulaSummary": "df = (∂f/∂x)dx + (∂f/∂y)dy",
     },
     {
         "id": "c-basics", "name": "C Basics",

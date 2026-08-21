@@ -9,6 +9,22 @@ export const api = axios.create({
   timeout: 120000,
 });
 
+/** Identity for every request: the backend scopes user data by this header. */
+function storedUserId(): string | null {
+  try {
+    const raw = localStorage.getItem("leximind_user");
+    return raw ? (JSON.parse(raw)?.id ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+api.interceptors.request.use((config) => {
+  const id = storedUserId();
+  if (id) config.headers.set?.("X-User-Id", id);
+  return config;
+});
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -28,6 +44,8 @@ api.interceptors.response.use(
 export const uploadDocument = (file: File) => {
   const fd = new FormData();
   fd.append("file", file);
+  const uid = storedUserId();
+  if (uid) fd.append("user_id", uid);
 
   return api.post("/documents/upload", fd, {
     headers: {
@@ -186,6 +204,8 @@ export const uploadLibraryDocument = (file: File, meta: Record<string, string>) 
     if (v) fd.append(k, v);
   });
   fd.append("process", "true");
+  const uid = storedUserId();
+  if (uid && !meta.user_id) fd.append("user_id", uid);
   return api.post("/documents/upload", fd, {
     headers: { "Content-Type": "multipart/form-data" },
   });
@@ -241,20 +261,65 @@ export const sendTutorMessage = (
   extra: {
     docId?: number | null;
     history?: ChatMessage[];
+    userId?: string;
     subjectId?: string;
+    chapterId?: string;
     conceptId?: string;
     educationLevel?: string;
     course?: string;
     action?: string;
   } = {}
 ) =>
-  api.post("/chat", {
+  api.post("/ai/tutor", {
     message,
     doc_id: extra.docId ?? null,
     history: extra.history ?? [],
+    user_id: extra.userId,
     subject_id: extra.subjectId,
+    chapter_id: extra.chapterId,
     concept_id: extra.conceptId,
     education_level: extra.educationLevel,
     course: extra.course,
     action: extra.action,
   });
+
+// =====================
+// PHASE 3 ADAPTIVE LEARNING
+// =====================
+
+export const getWeakConceptsApi = (userId: string, subjectId?: string) =>
+  api.get(`/learning/weak-concepts/${userId}`, { params: { subject_id: subjectId } });
+
+export const getRecommendationsApi = (userId: string, subjectId?: string, limit = 5) =>
+  api.get(`/learning/recommendations/${userId}`, { params: { subject_id: subjectId, limit } });
+
+export const getNextRecommendationApi = (userId: string, subjectId?: string) =>
+  api.get(`/learning/recommendations/${userId}/next`, { params: { subject_id: subjectId } });
+
+export const getDailyPlanApi = (userId: string, subjectId?: string, studyMinutes?: number) =>
+  api.get(`/learning/daily-plan/${userId}`, {
+    params: { subject_id: subjectId, study_minutes: studyMinutes },
+  });
+
+export const getReviewScheduleApi = (userId: string) =>
+  api.get(`/learning/review-schedule/${userId}`);
+
+export const getQuizHistoryApi = (userId: string, limit = 50) =>
+  api.get(`/learning/history/${userId}`, { params: { limit } });
+
+export const getMistakesApi = (userId: string, conceptId?: string) =>
+  api.get(`/learning/mistakes/${userId}`, { params: { concept_id: conceptId } });
+
+export const getPrerequisitesApi = (conceptId: string, userId?: string) =>
+  api.get(`/learning/prerequisites/${conceptId}`, { params: { user_id: userId } });
+
+export const getAdaptiveConfigApi = () => api.get("/learning/config");
+
+export const generateAdaptiveQuiz = (body: {
+  user_id: string;
+  subject_id?: string;
+  chapter_id?: string;
+  concept_id?: string;
+  question_count?: number;
+  include_recent?: boolean;
+}) => api.post("/quizzes/adaptive", body);

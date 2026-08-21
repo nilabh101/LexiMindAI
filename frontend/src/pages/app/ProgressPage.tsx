@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, CheckCircle, Clock, Zap, Flame, Target } from "lucide-react";
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, Cell } from "recharts";
-import { masteryColor } from "../../services/adaptiveEngine";
+import { masteryColor, stateLabel, currentUserId, fetchProgress } from "../../services/adaptiveEngine";
 import { CONCEPTS, getSubject } from "../../data/curriculum";
-import { getProgressApi } from "../../lib/api";
 import { loadUser } from "../../store/userStore";
 import type { ProgressStats } from "../../types/education";
 
@@ -17,13 +16,15 @@ export function ProgressPage() {
     totalQuizAttempts: 0, pyqsSolved: 0, totalStudyMinutes: 0, streak: 0, subjectMastery: [],
   });
   const [masteryRows, setMasteryRows] = useState<any[]>([]);
+  const [extra, setExtra] = useState<{ accuracy: number; questionsAnswered: number; questionsCorrect: number; overallMastery: number; hasHistory: boolean }>({
+    accuracy: 0, questionsAnswered: 0, questionsCorrect: 0, overallMastery: 0, hasHistory: true,
+  });
   const [error, setError] = useState<string | null>(null);
+  const userId = currentUserId(user);
 
   useEffect(() => {
-    const userId = user?.id || "demo-user-1";
-    getProgressApi(userId)
-      .then(r => {
-        const d = r.data;
+    fetchProgress(userId)
+      .then(d => {
         setStats({
           totalConcepts: d.totalConcepts ?? 0,
           masteredConcepts: d.masteredConcepts ?? 0,
@@ -36,9 +37,16 @@ export function ProgressPage() {
           subjectMastery: d.subjectMastery ?? [],
         });
         setMasteryRows(d.concepts || []);
+        setExtra({
+          accuracy: d.accuracy ?? 0,
+          questionsAnswered: d.questionsAnswered ?? 0,
+          questionsCorrect: d.questionsCorrect ?? 0,
+          overallMastery: d.overallMastery ?? 0,
+          hasHistory: d.hasHistory ?? false,
+        });
       })
       .catch(e => setError(e?.message || "Could not load progress"));
-  }, [user?.id]);
+  }, [userId]);
 
   const subjectRadarData = stats.subjectMastery.map(sm => ({
     subject: getSubject(sm.subjectId)?.shortName ?? sm.subjectId,
@@ -56,9 +64,20 @@ export function ProgressPage() {
     <div className="p-6 lg:p-8 max-w-5xl mx-auto">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Progress</h1>
-        <p className="text-slate-400 text-sm mt-1">Your learning journey at a glance.</p>
+        <p className="text-slate-400 text-sm mt-1">
+          Your learning journey at a glance — every number below comes from your recorded attempts.
+        </p>
         {error && <p className="text-sm text-red-300 mt-2">{error}</p>}
       </div>
+
+      {!extra.hasHistory && !error && (
+        <div className="bg-white/3 border border-white/6 rounded-2xl p-8 text-center mb-8">
+          <p className="text-slate-300 font-medium">No study history yet</p>
+          <p className="text-slate-500 text-sm mt-1">
+            Take an adaptive quiz and your mastery, accuracy and charts will appear here.
+          </p>
+        </div>
+      )}
 
       {/* Top stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
@@ -69,6 +88,9 @@ export function ProgressPage() {
           { icon: TrendingUp,  label: "PYQs Solved", value: stats.pyqsSolved,         color: "text-blue-400"   },
           { icon: Clock,       label: "Study Time",  value: `${Math.round(stats.totalStudyMinutes/60)}h`, color: "text-purple-400" },
           { icon: Flame,       label: "Streak",      value: `${stats.streak}d`,       color: "text-orange-400" },
+          { icon: Target,      label: "Accuracy",    value: `${extra.accuracy}%`,     color: "text-emerald-400" },
+          { icon: Zap,         label: "Questions",   value: extra.questionsAnswered,  color: "text-indigo-400" },
+          { icon: TrendingUp,  label: "Overall Mastery", value: `${extra.overallMastery}%`, color: "text-purple-400" },
         ].map(({ icon: Icon, label, value, color }, i) => (
           <motion.div key={label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
             className="bg-white/3 border border-white/6 rounded-2xl p-5 text-center">
@@ -112,22 +134,31 @@ export function ProgressPage() {
       {/* Concept list */}
       <h3 className="font-semibold text-white mb-4">All Concepts</h3>
       <div className="space-y-2">
+        {masteryRows.length === 0 && (
+          <div className="bg-white/3 border border-white/6 rounded-xl p-6 text-center text-slate-500 text-sm">
+            No concept mastery recorded yet.
+          </div>
+        )}
         {masteryRows.map((m, i) => {
           const concept = CONCEPTS.find(c => c.id === m.conceptId);
           const sub = concept ? getSubject(concept.subjectId) : null;
           if (!concept) return null;
+          const score = Math.round(m.mastery ?? 0);
           return (
             <motion.div key={m.conceptId} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.04 }}
               className="bg-white/3 border border-white/6 rounded-xl p-4 flex items-center gap-4">
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-white">{concept.name}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{sub?.name}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {sub?.name}{m.state ? ` · ${stateLabel(m.state)}` : ""}
+                  {m.attempted ? ` · ${m.correct}/${m.attempted} correct` : ""}
+                </div>
               </div>
               <div className="w-28 bg-white/8 rounded-full h-2 shrink-0">
-                <div className={`h-2 rounded-full transition-all ${m.score >= 80 ? "bg-emerald-500" : m.score >= 50 ? "bg-indigo-500" : m.score > 0 ? "bg-amber-500" : "bg-slate-700"}`}
-                  style={{ width: `${m.score}%` }} />
+                <div className={`h-2 rounded-full transition-all ${score >= 80 ? "bg-emerald-500" : score >= 50 ? "bg-indigo-500" : score > 0 ? "bg-amber-500" : "bg-slate-700"}`}
+                  style={{ width: `${score}%` }} />
               </div>
-              <div className={`text-sm font-bold w-10 text-right shrink-0 ${masteryColor(m.score)}`}>{m.score > 0 ? `${m.score}%` : "—"}</div>
+              <div className={`text-sm font-bold w-10 text-right shrink-0 ${masteryColor(score)}`}>{m.attempted ? `${score}%` : "—"}</div>
             </motion.div>
           );
         })}

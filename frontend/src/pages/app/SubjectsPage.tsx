@@ -2,9 +2,9 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Clock, BookOpen, ChevronRight } from "lucide-react";
 import { loadUser } from "../../store/userStore";
-import { DEMO_USER, DEMO_MASTERY } from "../../data/demoData";
-import { getSubjectsByCourse, getChaptersBySubject } from "../../data/curriculum";
-import { masteryColor } from "../../services/adaptiveEngine";
+import { DEMO_USER } from "../../data/demoData";
+import { getSubjectsByCourse, getChaptersBySubject, getConceptsByChapter } from "../../data/curriculum";
+import { masteryColor, useMasteryMap } from "../../services/adaptiveEngine";
 
 const COLOR_MAP: Record<string, string> = {
   indigo: "from-indigo-500 to-purple-500",
@@ -19,6 +19,7 @@ export function SubjectsPage() {
   const user = loadUser() ?? DEMO_USER;
   const courseId = user.academicProfile?.courseId ?? "";
   const subjects = getSubjectsByCourse(courseId);
+  const { map: masteryMap } = useMasteryMap();
 
   return (
     <div className="p-6 lg:p-8 max-w-5xl mx-auto">
@@ -40,11 +41,11 @@ export function SubjectsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {subjects.map((sub, i) => {
             const chapters = getChaptersBySubject(sub.id);
-            const relevantMastery = DEMO_MASTERY.filter(m => {
-              // Approximate: check by subjectId on concepts
-              return true;
-            });
-            const avgMastery = 55; // demo value
+            // Subject mastery = mean LexiMind Mastery Score across this subject's concepts.
+            const subjectConcepts = chapters.flatMap(c => getConceptsByChapter(c.id));
+            const avgMastery = subjectConcepts.length
+              ? Math.round(subjectConcepts.reduce((s, c) => s + (masteryMap[c.id]?.score ?? 0), 0) / subjectConcepts.length)
+              : 0;
 
             return (
               <motion.div key={sub.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>

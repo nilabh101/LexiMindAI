@@ -1,11 +1,14 @@
 """Document upload, listing, and retrieval endpoints."""
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import (
+    APIRouter, UploadFile, File, Form, Depends, HTTPException, Query, BackgroundTasks, Request,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import or_, select, delete
 from typing import List, Optional
 from pathlib import Path
 
 from app.core.database import get_db
+from app.core.identity import optional_user_id
 from app.models.document import Document
 from app.services.ingestion import save_upload, extract_text_from_file
 from app.nlp.text_processor import compute_stats, clean_text
@@ -129,6 +132,9 @@ async def upload_document(
     )
     db.add(doc)
     await db.flush()
+    # Commit before scheduling: the background task opens its own session and
+    # must be able to read the row regardless of dependency teardown ordering.
+    await db.commit()
     await db.refresh(doc)
 
     if process:
@@ -138,55 +144,90 @@ async def upload_document(
     return _to_response(doc)
 
 
+async def _owned_document(db: AsyncSession, doc_id: int, viewer: Optional[str]) -> Document:
+    """Fetch a document, refusing access when it belongs to a different user.
+
+    Documents uploaded before user ids were recorded have no owner and stay
+    readable, so Phase 2 libraries keep working.
+    """
+    doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.user_id and doc.user_id != viewer:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
 @router.get("/", response_model=List[DocumentResponse])
 async def list_documents(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    user_id: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Document).order_by(Document.upload_date.desc()).offset(skip).limit(limit)
+    viewer = optional_user_id(request, user_id)
+    stmt = select(Document).order_by(Document.upload_date.desc())
+    # Own documents plus legacy ones with no recorded owner.
+    stmt = stmt.where(
+        Document.user_id.is_(None) if viewer is None else
+        or_(Document.user_id.is_(None), Document.user_id == viewer)
     )
+    result = await db.execute(stmt.offset(skip).limit(limit))
     docs = result.scalars().all()
     return [_to_response(d) for d in docs]
 
 
 @router.get("/{doc_id}", response_model=DocumentResponse)
-async def get_document(doc_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return _to_response(doc)
+async def get_document(
+    doc_id: int,
+    request: Request,
+    user_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    return _to_response(await _owned_document(db, doc_id, optional_user_id(request, user_id)))
 
 
 @router.post("/{doc_id}/process", response_model=DocumentResponse)
-async def process_document(doc_id: int, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+async def process_document(
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    user_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = await _owned_document(db, doc_id, optional_user_id(request, user_id))
     doc.status = "PROCESSING"
     doc.error_message = None
+    await db.commit()
+    await db.refresh(doc)
     from app.services.pipeline import process_document_by_id
     background_tasks.add_task(process_document_by_id, doc.id)
     return _to_response(doc)
 
 
 @router.post("/{doc_id}/retry", response_model=DocumentResponse)
-async def retry_document(doc_id: int, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    return await process_document(doc_id, background_tasks, db)
+async def retry_document(
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    user_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await process_document(doc_id, background_tasks, request, user_id, db)
 
 
 @router.delete("/{doc_id}")
-async def delete_document(doc_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+async def delete_document(
+    doc_id: int,
+    request: Request,
+    user_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = await _owned_document(db, doc_id, optional_user_id(request, user_id))
 
-    # Remove file from disk
-    upload_path = Path("uploads") / doc.filename
+    # Remove file from disk — always resolved from the stored name, never a client path.
+    upload_path = Path("uploads") / Path(doc.filename).name
     if upload_path.exists():
         upload_path.unlink()
 
@@ -197,16 +238,15 @@ async def delete_document(doc_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/{doc_id}/search")
 async def search_in_document(
     doc_id: int,
+    request: Request,
     query: str = Query(..., min_length=1),
     case_sensitive: bool = Query(False),
+    user_id: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Search for a word or phrase — returns total count, every location, context snippets."""
     import re
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc = await _owned_document(db, doc_id, optional_user_id(request, user_id))
     if not doc.extracted_text:
         raise HTTPException(status_code=422, detail="Document text not available")
 

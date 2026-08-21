@@ -93,3 +93,6 @@ pnpm-debug.log*
 .coverage
 coverage/
 test-results/
+
+# Build info
+*.tsbuildinfo

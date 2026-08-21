@@ -1,8 +1,18 @@
-"""Tiny DEMO dataset — clearly labeled, never presented as authentic PYQs."""
+"""Tiny DEMO dataset — clearly labeled, never presented as authentic PYQs.
+
+The demo learner's *attempts* are seeded, but the mastery values themselves are
+always computed by the real engine from those attempts — no score is invented.
+"""
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.academic import AcademicConcept, Question, AcademicNote, QuestionConcept
+from app.models.academic import (
+    AcademicConcept, AcademicNote, ConceptMastery, Question, QuestionConcept, QuizAnswer,
+)
+
+DEMO_USER_ID = "demo-user-1"
 
 
 DEMO_CONCEPTS = [
@@ -127,13 +137,81 @@ DEMO_QUESTIONS = [
         "subject_id": "em1-btech",
         "chapter_id": "dc-em1",
     },
+    {
+        "question_text": "[DEMO] Evaluate lim(x→0) sin(x)/x.",
+        "options": ["0", "1", "∞", "undefined"],
+        "answer": "1",
+        "explanation": "Standard limit: sin(x)/x → 1 as x → 0.",
+        "question_type": "MCQ",
+        "difficulty": "EASY",
+        "concept_id": "limits-dc",
+        "subject_id": "em1-btech",
+        "chapter_id": "dc-em1",
+    },
+    {
+        "question_text": "[DEMO] A function f is continuous at x = a if:",
+        "options": [
+            "lim(x→a) f(x) = f(a)",
+            "f(a) is defined only",
+            "lim(x→a) f(x) exists only",
+            "f is differentiable at a",
+        ],
+        "answer": "lim(x→a) f(x) = f(a)",
+        "explanation": "Continuity requires the limit to exist and equal the value.",
+        "question_type": "MCQ",
+        "difficulty": "EASY",
+        "concept_id": "limits-dc",
+        "subject_id": "em1-btech",
+        "chapter_id": "dc-em1",
+    },
+    {
+        "question_text": "[DEMO] For f(x, y) = x²y + y³, find ∂f/∂y.",
+        "options": ["x² + 3y²", "2xy", "x²y", "3y²"],
+        "answer": "x² + 3y²",
+        "explanation": "Treat x as constant: ∂/∂y(x²y + y³) = x² + 3y².",
+        "question_type": "MCQ",
+        "difficulty": "EASY",
+        "concept_id": "partial-derivatives-dc",
+        "subject_id": "em1-btech",
+        "chapter_id": "dc-em1",
+    },
+    {
+        "question_text": "[DEMO] If u = log((x³ + y³)/(x + y)), show that x ux + y uy = 2.",
+        "options": None,
+        "answer": None,
+        "explanation": "e^u is homogeneous of degree 2; apply Euler's theorem to e^u.",
+        "question_type": "PROOF",
+        "difficulty": "HARD",
+        "concept_id": "euler-theorem-dc",
+        "subject_id": "em1-btech",
+        "chapter_id": "dc-em1",
+    },
+    {
+        "question_text": "[DEMO] Verify Clairaut's theorem (fxy = fyx) for f(x, y) = x³y².",
+        "options": None,
+        "answer": None,
+        "explanation": "fxy = 6x²y and fyx = 6x²y, so the mixed partials agree.",
+        "question_type": "PROOF",
+        "difficulty": "HARD",
+        "concept_id": "partial-derivatives-dc",
+        "subject_id": "em1-btech",
+        "chapter_id": "dc-em1",
+    },
+]
+
+# Demo learner attempt history: limits are solid, Euler's theorem is not.
+# (question index into DEMO_QUESTIONS, correct, days ago)
+DEMO_ATTEMPTS = [
+    (7, True, 6), (8, True, 6), (7, True, 3), (8, True, 3), (7, True, 1), (8, True, 1),
+    (1, False, 5), (0, False, 5), (4, False, 4), (6, True, 2), (1, False, 1), (0, False, 1),
+    (2, True, 4), (9, True, 4), (5, False, 2),
 ]
 
 
 async def seed_demo_if_needed(db: AsyncSession) -> None:
-    count = await db.execute(select(func.count()).select_from(Question).where(Question.is_demo.is_(True)))
-    if (count.scalar() or 0) > 0:
-        return
+    existing_texts = set((await db.execute(
+        select(Question.question_text).where(Question.is_demo.is_(True))
+    )).scalars().all())
 
     for c in DEMO_CONCEPTS:
         exists = await db.execute(select(AcademicConcept).where(AcademicConcept.slug == c["slug"]))
@@ -142,6 +220,8 @@ async def seed_demo_if_needed(db: AsyncSession) -> None:
         db.add(AcademicConcept(**c, is_demo=True, needs_review=False, review_status="APPROVED"))
 
     for q in DEMO_QUESTIONS:
+        if q["question_text"] in existing_texts:
+            continue
         row = Question(
             document_id=None,
             question_text=q["question_text"],
@@ -180,6 +260,14 @@ async def seed_demo_if_needed(db: AsyncSession) -> None:
                 needs_review=False,
             ))
 
+    note_exists = await db.execute(
+        select(AcademicNote.id).where(AcademicNote.title == "[DEMO] Euler's Theorem — Complete Notes")
+    )
+    if note_exists.scalars().first():
+        await db.flush()
+        await seed_demo_learner(db)
+        return
+
     db.add(AcademicNote(
         title="[DEMO] Euler's Theorem — Complete Notes",
         subject_id="em1-btech",
@@ -198,4 +286,64 @@ async def seed_demo_if_needed(db: AsyncSession) -> None:
         is_demo=True,
         source_pages=None,
     ))
+    await db.flush()
+    await seed_demo_learner(db)
+
+
+async def seed_demo_learner(db: AsyncSession) -> None:
+    """Give the demo user a small attempt history (one weak, one mastered concept).
+
+    Only the attempts are seeded; mastery is then computed by the real engine.
+    """
+    from app.services.mastery import recalculate_concept_mastery
+    from app.services.review import schedule_next_review
+
+    existing = await db.execute(
+        select(func.count()).select_from(QuizAnswer).where(QuizAnswer.user_id == DEMO_USER_ID)
+    )
+    if (existing.scalar() or 0) > 0:
+        # Attempts already seeded — refresh derived state so databases created by
+        # earlier versions pick up newly added mastery/review fields.
+        rows = (await db.execute(
+            select(ConceptMastery).where(ConceptMastery.user_id == DEMO_USER_ID)
+        )).scalars().all()
+        for row in rows:
+            await recalculate_concept_mastery(
+                db, DEMO_USER_ID, row.concept_id, subject_id=row.subject_id or "em1-btech",
+            )
+        await db.flush()
+        return
+
+    demo_questions = list((await db.execute(
+        select(Question).where(Question.source == "DEMO").order_by(Question.id.asc())
+    )).scalars().all())
+    by_text = {q.question_text: q for q in demo_questions}
+
+    now = datetime.now(timezone.utc)
+    touched = set()
+    for index, correct, days_ago in DEMO_ATTEMPTS:
+        question = by_text.get(DEMO_QUESTIONS[index]["question_text"])
+        if question is None:
+            continue
+        db.add(QuizAnswer(
+            user_id=DEMO_USER_ID,
+            quiz_id=f"demo-quiz-{days_ago}",
+            question_id=question.id,
+            selected_answer=question.answer if correct else "[DEMO] incorrect answer",
+            correct_answer=question.answer,
+            correct=correct,
+            time_taken=45.0,
+            concept_id=question.concept_id,
+            difficulty=question.difficulty,
+            created_at=now - timedelta(days=days_ago),
+        ))
+        touched.add(question.concept_id)
+    await db.flush()
+
+    for concept_id in touched:
+        row = await recalculate_concept_mastery(
+            db, DEMO_USER_ID, concept_id, subject_id="em1-btech", session_accuracy=None, now=now,
+        )
+        accuracy = (row.questions_correct or 0) / max(row.questions_attempted or 1, 1)
+        row.review_interval_days, row.next_review_at = schedule_next_review(None, accuracy, now=now)
     await db.flush()
