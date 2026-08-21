@@ -179,7 +179,7 @@ PHASE 2 VERIFIED: PASS
 PHASE 3 VERIFIED: PASS
 ```
 
-Evidence: 66 backend tests passing, clean typecheck and production build, and live probes of every endpoint above against a running server with the seeded demo dataset (7 concepts, 12+ questions, 15 attempts, 1 mastered concept, 1 weak concept, 2+ prerequisite relations) returning real derived values — overall mastery 56.1, accuracy 60%, Euler's Theorem 27 (`VERY_WEAK`), Partial Derivatives 53.9 (`DEVELOPING`), Limits 87.5 (`MASTERED`), and a next recommendation of *review Partial Derivatives* because Euler's Theorem depends on it.
+Evidence: 74 backend tests passing (including the cross-user content isolation suite), clean typecheck and production build, and live probes of every endpoint above against a running server with the seeded demo dataset (7 concepts, 12+ questions, 15 attempts, 1 mastered concept, 1 weak concept, 2+ prerequisite relations) returning real derived values — overall mastery 56.1, accuracy 60%, Euler's Theorem 27 (`VERY_WEAK`), Partial Derivatives 53.9 (`DEVELOPING`), Limits 87.5 (`MASTERED`), and a next recommendation of *review Partial Derivatives* because Euler's Theorem depends on it. Two browser end-to-end passes were run; every defect found in either pass is fixed and re-verified in the browser (sections 18-19).
 
 ## 17. Remaining limitations
 
@@ -199,3 +199,15 @@ The first end-to-end browser pass found six issues; all code defects are fixed a
 - A quiz for a concept with no stored questions silently served unrelated questions. Explicit concept requests no longer widen to the rest of the subject; they return an honest empty state, and prerequisite substitution is always disclosed in `prerequisite_note`.
 - `SIMILAR_QUESTION` returned the same question as `TEST_ME` — it now excludes that pick when the bank has an alternative.
 - `total-derivatives-dc` was referenced by the chapter but missing from the backend curriculum, producing a slug-derived label; the concept definition was added.
+
+## 19. Browser E2E follow-ups (second run)
+
+The retest confirmed the six fixes above and found three further issues, all fixed and re-verified in the browser:
+
+- The prerequisite note was only rendered on the quiz setup card, so it disappeared exactly when substitution happened. It is now shown above the question progress bar for the whole quiz.
+- Notes, questions, search, retrieval and tutor material exposed content derived from another user's uploaded PDF. `app/services/ownership.py` now filters every derived surface by the owner of the source document (rows with no source document — seeded curriculum and demo content — remain visible to everyone), and `tests/test_content_isolation.py` covers `/api/notes`, `/api/notes/{id}`, `/api/questions`, `/api/search`, `/api/retrieve`, `/api/documents/{id}/detail`, the tutor actions and adaptive quiz selection.
+- Backend search had no UI. A sidebar search box and `/app/search` page now consume the existing `GET /api/search`; duplicate concept slugs (curriculum plus extracted) are de-duplicated server side.
+
+Verified in the browser at the fixed revision: the amber prerequisite banner persists across questions; `demo-user-1` no longer sees the other user's note in the Notes list, note detail, search, retrieval or tutor sources, while the uploading user still sees all of their own material; search renders scoped results and an honest empty state; and the dashboard, progress, quiz route and tutor actions still show real seeded data.
+
+One item is covered by unit tests only: adaptive quiz candidate filtering by document owner could not be exercised in the browser because the seeded database has no questions derived from an uploaded document.

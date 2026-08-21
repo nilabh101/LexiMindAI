@@ -16,6 +16,19 @@ def _match(q: str, *fields) -> bool:
     return any(n in (f or "").lower() for f in fields)
 
 
+def _dedupe_by_id(items: List[Dict]) -> List[Dict]:
+    """Curriculum and extracted concepts can share a slug — keep the first."""
+    seen = set()
+    out = []
+    for item in items:
+        key = item.get("id")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
 async def search_all(
     db: AsyncSession,
     query: str,
@@ -93,7 +106,7 @@ async def search_all(
         "query": q,
         "subjects": subjects[:limit],
         "chapters": chapters[:limit],
-        "concepts": (concepts_static + db_concepts)[:limit],
+        "concepts": _dedupe_by_id(concepts_static + db_concepts)[:limit],
         "notes": notes,
         "questions": questions,
         "documents": documents,

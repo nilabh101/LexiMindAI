@@ -95,8 +95,8 @@ export function SearchPage() {
 
       {results.concepts.length > 0 && (
         <Section title={`Concepts (${results.concepts.length})`}>
-          {results.concepts.map((c: any) => (
-            <Row key={c.id} to={`/app/concepts/${c.id}`} primary={c.name} secondary={c.description || c.subjectId} />
+          {results.concepts.map((c: any, i: number) => (
+            <Row key={`${c.id}-${i}`} to={`/app/concepts/${c.id}`} primary={c.name} secondary={c.description || c.subjectId} />
           ))}
         </Section>
       )}
