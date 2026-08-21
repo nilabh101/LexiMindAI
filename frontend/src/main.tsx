@@ -1,26 +1,38 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
 
-import { Layout }          from "./components/Layout";
-import { Dashboard }       from "./pages/Dashboard";
-import { Upload }          from "./pages/Upload";
-import { AnalysisPage }    from "./pages/AnalysisPage";
-import { TopicsPage }      from "./pages/TopicsPage";
-import { DNAPage }         from "./pages/DNAPage";
-import { SearchPage }      from "./pages/SearchPage";
-import { QuizPage }        from "./pages/QuizPage";
-import { ReportsPage }     from "./pages/ReportsPage";
-import { CorePage }        from "./pages/CorePage";
+// ── Public pages ──────────────────────────────────────────────────────────────
+import { LandingPage }      from "./pages/landing/LandingPage";
+import { LoginPage }        from "./pages/auth/LoginPage";
+import { RegisterPage }     from "./pages/auth/RegisterPage";
+import { OnboardingPage }   from "./pages/onboarding/OnboardingPage";
+
+// ── App shell ─────────────────────────────────────────────────────────────────
+import { AppLayout }        from "./components/AppLayout";
+
+// ── App pages ─────────────────────────────────────────────────────────────────
+import { AppDashboard }     from "./pages/app/AppDashboard";
+import { LearnPage }        from "./pages/app/LearnPage";
+import { SubjectsPage }     from "./pages/app/SubjectsPage";
+import { SubjectDetailPage }from "./pages/app/SubjectDetailPage";
+import { ChapterPage }      from "./pages/app/ChapterPage";
+import { ConceptPage }      from "./pages/app/ConceptPage";
+import { LearningPathPage } from "./pages/app/LearningPathPage";
+import { QuizzesPage }      from "./pages/app/QuizzesPage";
+import { PYQsPage }         from "./pages/app/PYQsPage";
+import { NotesPage, NoteDetailPage } from "./pages/app/NotesPage";
+import { LibraryPage }      from "./pages/app/LibraryPage";
+import { TutorPage }        from "./pages/app/TutorPage";
+import { ProgressPage }     from "./pages/app/ProgressPage";
+import { ProfilePage }      from "./pages/app/ProfilePage";
 
 import "./index.css";
 
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { refetchOnWindowFocus: false, retry: 1 },
-  },
+  defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
 });
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -28,29 +40,39 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index          element={<Dashboard />}    />
-            <Route path="upload"  element={<Upload />}       />
-            <Route path="analysis"element={<AnalysisPage />} />
-            <Route path="topics"  element={<TopicsPage />}   />
-            <Route path="dna"     element={<DNAPage />}      />
-            <Route path="search"  element={<SearchPage />}   />
-            <Route path="quiz"    element={<QuizPage />}     />
-            <Route path="reports" element={<ReportsPage />}  />
-            <Route path="core"    element={<CorePage />}     />
+          {/* Public */}
+          <Route path="/"            element={<LandingPage />} />
+          <Route path="/login"       element={<LoginPage />} />
+          <Route path="/register"    element={<RegisterPage />} />
+          <Route path="/onboarding"  element={<OnboardingPage />} />
+
+          {/* App — protected shell */}
+          <Route path="/app" element={<AppLayout />}>
+            <Route index                          element={<AppDashboard />} />
+            <Route path="learn"                   element={<LearnPage />} />
+            <Route path="subjects"                element={<SubjectsPage />} />
+            <Route path="subjects/:subjectId"     element={<SubjectDetailPage />} />
+            <Route path="chapters/:chapterId"     element={<ChapterPage />} />
+            <Route path="concepts/:conceptId"     element={<ConceptPage />} />
+            <Route path="learning-path"           element={<LearningPathPage />} />
+            <Route path="quizzes"                 element={<QuizzesPage />} />
+            <Route path="pyqs"                    element={<PYQsPage />} />
+            <Route path="notes"                   element={<NotesPage />} />
+            <Route path="notes/:noteId"           element={<NoteDetailPage />} />
+            <Route path="library"                 element={<LibraryPage />} />
+            <Route path="tutor"                   element={<TutorPage />} />
+            <Route path="progress"                element={<ProgressPage />} />
+            <Route path="profile"                 element={<ProfilePage />} />
           </Route>
+
+          {/* Catch-all */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          style: {
-            background: "#1a1a2e",
-            color: "#fff",
-            border: "1px solid rgba(255,255,255,0.1)",
-          },
-        }}
-      />
+
+      <Toaster position="top-right" toastOptions={{
+        style: { background: "#0d0d1a", color: "#fff", border: "1px solid rgba(255,255,255,0.08)" },
+      }} />
     </QueryClientProvider>
   </React.StrictMode>
 );

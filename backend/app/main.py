@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.api import documents, analysis
 from app.api.chat import router as chat_router
+from app.api.education import router as education_router
+from app.api.learning import router as learning_router
 
 
 @asynccontextmanager
@@ -46,9 +48,11 @@ app.add_middleware(
 )
 
 # All routers mounted under /api
-app.include_router(documents.router, prefix="/api")   # → /api/documents/...
-app.include_router(analysis.router,  prefix="/api")   # → /api/analysis/...
-app.include_router(chat_router,      prefix="/api")   # → /api/chat/...
+app.include_router(documents.router,  prefix="/api")
+app.include_router(analysis.router,   prefix="/api")
+app.include_router(chat_router,       prefix="/api")
+app.include_router(education_router,  prefix="/api")
+app.include_router(learning_router,   prefix="/api")
 
 
 @app.get("/")
