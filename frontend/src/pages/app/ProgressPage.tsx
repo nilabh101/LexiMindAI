@@ -143,6 +143,7 @@ export function ProgressPage() {
           const concept = CONCEPTS.find(c => c.id === m.conceptId);
           const sub = concept ? getSubject(concept.subjectId) : null;
           if (!concept) return null;
+          const score = Math.round(m.mastery ?? 0);
           return (
             <motion.div key={m.conceptId} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.04 }}
               className="bg-white/3 border border-white/6 rounded-xl p-4 flex items-center gap-4">
@@ -150,14 +151,14 @@ export function ProgressPage() {
                 <div className="text-sm font-medium text-white">{concept.name}</div>
                 <div className="text-xs text-slate-500 mt-0.5">
                   {sub?.name}{m.state ? ` · ${stateLabel(m.state)}` : ""}
-                  {m.questionsAttempted ? ` · ${m.questionsCorrect}/${m.questionsAttempted} correct` : ""}
+                  {m.attempted ? ` · ${m.correct}/${m.attempted} correct` : ""}
                 </div>
               </div>
               <div className="w-28 bg-white/8 rounded-full h-2 shrink-0">
-                <div className={`h-2 rounded-full transition-all ${m.score >= 80 ? "bg-emerald-500" : m.score >= 50 ? "bg-indigo-500" : m.score > 0 ? "bg-amber-500" : "bg-slate-700"}`}
-                  style={{ width: `${m.score}%` }} />
+                <div className={`h-2 rounded-full transition-all ${score >= 80 ? "bg-emerald-500" : score >= 50 ? "bg-indigo-500" : score > 0 ? "bg-amber-500" : "bg-slate-700"}`}
+                  style={{ width: `${score}%` }} />
               </div>
-              <div className={`text-sm font-bold w-10 text-right shrink-0 ${masteryColor(m.score)}`}>{m.score > 0 ? `${m.score}%` : "—"}</div>
+              <div className={`text-sm font-bold w-10 text-right shrink-0 ${masteryColor(score)}`}>{m.attempted ? `${score}%` : "—"}</div>
             </motion.div>
           );
         })}

@@ -157,6 +157,14 @@ CONCEPTS = [
         "formulaSummary": "x·(∂f/∂x) + y·(∂f/∂y) = n·f",
     },
     {
+        "id": "total-derivatives-dc", "name": "Total Derivatives",
+        "chapterId": "dc-em1", "subjectId": "em1-btech",
+        "difficulty": "intermediate", "estimatedMinutes": 40, "prerequisites": ["euler-theorem-dc"],
+        "description": "Total differential, chain rule for partial derivatives.",
+        "keyPoints": ["Total differential df","Chain rule for composite functions","Implicit differentiation","Applications to error analysis"],
+        "formulaSummary": "df = (∂f/∂x)dx + (∂f/∂y)dy",
+    },
+    {
         "id": "c-basics", "name": "C Basics",
         "chapterId": "intro-c", "subjectId": "programming-btech",
         "difficulty": "beginner", "estimatedMinutes": 25, "prerequisites": [],

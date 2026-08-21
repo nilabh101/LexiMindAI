@@ -124,6 +124,16 @@ def _serialize_question(q: Question) -> Dict:
     }
 
 
+async def _attempted_question_ids(db: AsyncSession, user_id: Optional[str]) -> List[int]:
+    if not user_id:
+        return []
+    return [r[0] for r in (await db.execute(
+        select(QuizAnswer.question_id).where(
+            QuizAnswer.user_id == user_id, QuizAnswer.question_id.isnot(None)
+        )
+    )).all()]
+
+
 async def _pick_question(
     db: AsyncSession,
     concept_id: Optional[str],
@@ -159,13 +169,7 @@ async def resolve_action(
     """Data payload for actions that must be backed by real records."""
     action = normalize_action(action)
     if action == "TEST_ME":
-        seen = []
-        if user_id:
-            seen = [r[0] for r in (await db.execute(
-                select(QuizAnswer.question_id).where(
-                    QuizAnswer.user_id == user_id, QuizAnswer.question_id.isnot(None)
-                )
-            )).all()]
+        seen = await _attempted_question_ids(db, user_id)
         q = await _pick_question(db, concept_id, subject_id, exclude_ids=seen) \
             or await _pick_question(db, concept_id, subject_id)
         return {"action": action, "question": _serialize_question(q) if q else None,
@@ -179,8 +183,17 @@ async def resolve_action(
             last_wrong = mistakes[0] if mistakes else None
         difficulty = (last_wrong or {}).get("difficulty")
         exclude = [last_wrong["questionId"]] if last_wrong and last_wrong.get("questionId") else []
-        q = await _pick_question(db, concept_id, subject_id, difficulty, exclude) \
+        # Do not hand back the question TEST_ME would serve — "similar" must be a
+        # different question when the bank has one.
+        seen = await _attempted_question_ids(db, user_id)
+        test_me_pick = await _pick_question(db, concept_id, subject_id, exclude_ids=seen)
+        if test_me_pick:
+            exclude = exclude + [test_me_pick.id]
+        q = (
+            await _pick_question(db, concept_id, subject_id, difficulty, exclude)
             or await _pick_question(db, concept_id, subject_id, None, exclude)
+            or test_me_pick
+        )
         return {"action": action, "question": _serialize_question(q) if q else None,
                 "basedOn": last_wrong, "empty": q is None,
                 "message": None if q else "No similar question is available yet."}

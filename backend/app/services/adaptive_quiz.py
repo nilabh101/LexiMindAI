@@ -74,6 +74,24 @@ async def _candidate_questions(
     return list((await db.execute(stmt.limit(limit))).scalars().all())
 
 
+def _bank_message(questions: List[Dict], requested: int, targets: List[str], widened: bool) -> Optional[str]:
+    """Honest description of what the bank could actually supply."""
+    label = ", ".join(concept_label(c) for c in targets) or "this selection"
+    if not questions:
+        return (
+            f"No questions are stored for {label} yet. "
+            "Upload notes or a PYQ PDF to build the bank."
+        )
+    if widened:
+        return (
+            f"No questions are stored for {label} yet — showing questions from the "
+            "rest of this subject instead."
+        )
+    if len(questions) < requested:
+        return f"Only {len(questions)} of {requested} questions are stored for {label} so far."
+    return None
+
+
 def _rank(question: Question, preferred: List[str], recent_ids: set, order: List[str]) -> tuple:
     source_order = {"PYQ": 0, "UPLOADED": 1, "PREMADE": 2, "DEMO": 3, "AI_GENERATED": 4}
     difficulty = (question.difficulty or DEFAULT_DIFFICULTY).upper()
@@ -139,8 +157,13 @@ async def build_adaptive_quiz(
 
     # 4/5. Candidates minus recently answered questions.
     candidates = await _candidate_questions(db, target_concepts, subject_id, chapter_id, question_count * 10)
-    if not candidates and target_concepts:
+    widened = False
+    if not candidates and target_concepts and not concept_id:
+        # Only widen beyond the targets when the caller did not ask for a
+        # specific concept — otherwise say the bank is empty instead of
+        # quietly serving questions about something else.
         candidates = await _candidate_questions(db, [], subject_id, chapter_id, question_count * 10)
+        widened = bool(candidates)
     recent_ids = set() if include_recent else await _recent_question_ids(db, user_id)
 
     ranked = sorted(candidates, key=lambda q: _rank(q, preferred, recent_ids, target_concepts))
@@ -160,9 +183,8 @@ async def build_adaptive_quiz(
             mastery_map[primary].questions_attempted if primary in mastery_map else 0,
         ) if primary else None,
         "questions": questions,
-        "message": None if questions else (
-            "No questions are stored for these concepts yet. Upload notes or a PYQ PDF to build the bank."
-        ),
+        "message": _bank_message(questions, question_count, target_concepts, widened),
+        "widened_beyond_targets": widened,
         "target_concepts": target_concepts,
         "target_difficulties": preferred,
         "starting_difficulty": preferred[0] if preferred else DEFAULT_DIFFICULTY,
@@ -172,7 +194,7 @@ async def build_adaptive_quiz(
         "prerequisite_concepts": prerequisite_concepts,
         "repeated_questions": repeated,
         "source_counts": _counts(questions),
-        "insufficient_bank": len(questions) < question_count,
+        "insufficient_bank": len(questions) < question_count or widened,
         "difficulty_rules": {
             "increaseAfterConsecutiveCorrect": CONSECUTIVE_CORRECT_TO_INCREASE,
             "decreaseAfterConsecutiveIncorrect": CONSECUTIVE_INCORRECT_TO_DECREASE,

@@ -440,3 +440,36 @@ async def test_adaptive_quiz_leads_with_primary_concept(db):
     quiz = await build_adaptive_quiz(db, "u14", subject_id="em1-btech", question_count=3)
     assert quiz["questions"]
     assert quiz["questions"][0]["concept_id"] == quiz["concept_id"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_concept_without_questions_returns_honest_empty_state(db):
+    quiz = await build_adaptive_quiz(
+        db, "u15", subject_id="programming-btech",
+        concept_id="c-basics", question_count=3,
+    )
+    assert quiz["questions"] == []
+    assert quiz["widened_beyond_targets"] is False
+    assert quiz["concept_id"] == "c-basics"
+    assert "No questions are stored for C Basics" in quiz["message"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_concept_falls_back_to_prerequisite_with_disclosure(db):
+    quiz = await build_adaptive_quiz(
+        db, "u17", subject_id="em1-btech",
+        concept_id="total-derivatives-dc", question_count=3,
+    )
+    # Total Derivatives has no stored questions; its unmastered prerequisite is
+    # practised instead and the swap is stated explicitly.
+    assert quiz["concept_id"] == "euler-theorem-dc"
+    assert "Total Derivatives" in quiz["prerequisite_note"]
+    assert quiz["widened_beyond_targets"] is False
+
+
+@pytest.mark.asyncio
+async def test_similar_question_differs_from_test_me_question(db):
+    test_me = await resolve_action(db, "TEST_ME", "u16", "em1-btech", "euler-theorem-dc")
+    similar = await resolve_action(db, "SIMILAR_QUESTION", "u16", "em1-btech", "euler-theorem-dc")
+    assert test_me["question"] and similar["question"]
+    assert similar["question"]["id"] != test_me["question"]["id"]

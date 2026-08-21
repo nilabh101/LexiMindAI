@@ -92,7 +92,7 @@ export function ConceptPage() {
         {[
           { label: "Study Concept", icon: BookOpen, color: "bg-indigo-600 hover:bg-indigo-500 text-white", to: `/app/notes?concept=${conceptId}` },
           { label: "Practice", icon: Zap, color: "bg-amber-600/80 hover:bg-amber-600 text-white", to: `/app/quizzes?concept=${conceptId}` },
-          { label: "Take Quiz", icon: CheckCircle, color: "bg-emerald-600/80 hover:bg-emerald-600 text-white", to: `/app/quizzes/new?concept=${conceptId}` },
+          { label: "Take Quiz", icon: CheckCircle, color: "bg-emerald-600/80 hover:bg-emerald-600 text-white", to: `/app/quizzes?concept=${conceptId}` },
           { label: "Ask Tutor", icon: MessageCircle, color: "bg-purple-600/80 hover:bg-purple-600 text-white", to: `/app/tutor?concept=${conceptId}` },
         ].map(({ label, icon: Icon, color, to }) => (
           <Link key={label} to={to}

@@ -168,7 +168,7 @@ Keys are read only on the backend and are never returned by an endpoint or shipp
 
 ## 15. Tests
 
-`backend/tests/` — 63 tests, all passing (`python -m pytest`): mastery calculation and determinism, difficulty weighting, recency decay, concept states, in-quiz difficulty control, prerequisite logic, weak-concept detection, recommendations, daily plan, adaptive selection and repetition control, review scheduling, learning-path states, quiz completion persistence, mistake patterns, tutor context/actions/grounding without an LLM, user isolation, document isolation, and edge cases (new user, question without concept, no questions available, no notes available).
+`backend/tests/` — 66 tests, all passing (`python -m pytest`): mastery calculation and determinism, difficulty weighting, recency decay, concept states, in-quiz difficulty control, prerequisite logic, weak-concept detection, recommendations, daily plan, adaptive selection and repetition control, review scheduling, learning-path states, quiz completion persistence, mistake patterns, tutor context/actions/grounding without an LLM, user isolation, document isolation, and edge cases (new user, question without concept, no questions available, no notes available).
 
 Frontend: `npx tsc --noEmit` (clean) and `npm run build` (clean; only a chunk-size advisory).
 
@@ -179,7 +179,7 @@ PHASE 2 VERIFIED: PASS
 PHASE 3 VERIFIED: PASS
 ```
 
-Evidence: 63 backend tests passing, clean typecheck and production build, and live probes of every endpoint above against a running server with the seeded demo dataset (7 concepts, 12+ questions, 15 attempts, 1 mastered concept, 1 weak concept, 2+ prerequisite relations) returning real derived values — overall mastery 56.1, accuracy 60%, Euler's Theorem 27 (`VERY_WEAK`), Partial Derivatives 53.9 (`DEVELOPING`), Limits 87.5 (`MASTERED`), and a next recommendation of *review Partial Derivatives* because Euler's Theorem depends on it.
+Evidence: 66 backend tests passing, clean typecheck and production build, and live probes of every endpoint above against a running server with the seeded demo dataset (7 concepts, 12+ questions, 15 attempts, 1 mastered concept, 1 weak concept, 2+ prerequisite relations) returning real derived values — overall mastery 56.1, accuracy 60%, Euler's Theorem 27 (`VERY_WEAK`), Partial Derivatives 53.9 (`DEVELOPING`), Limits 87.5 (`MASTERED`), and a next recommendation of *review Partial Derivatives* because Euler's Theorem depends on it.
 
 ## 17. Remaining limitations
 
@@ -187,3 +187,15 @@ Evidence: 63 backend tests passing, clean typecheck and production build, and li
 - The Gemini path could not be exercised — no API key is provisioned in this environment. The local fallback path is fully tested.
 - Demo academic content is clearly prefixed `[DEMO]`; real coverage depends on uploaded documents.
 - Mastery/recommendations are computed per request against SQLite. That is fine at the current scale; a cache would be needed for large classes.
+- Onboarding creates a fresh user id, so the seeded `demo-user-1` history is not visible through the normal sign-up flow. A new account correctly starts with empty states; to inspect the seeded baseline, store `{"id":"demo-user-1"}` under the `leximind_user` localStorage key. New users are deliberately not mapped onto the demo account — that would show them progress they never earned.
+
+## 18. Browser E2E follow-ups (fixed after the first run)
+
+The first end-to-end browser pass found six issues; all code defects are fixed and covered:
+
+- Subject Detail showed hardcoded 55% / 60% — now averaged from the live mastery map.
+- The concept "Take Quiz" button pointed at an unregistered `/app/quizzes/new` route — now `/app/quizzes?concept=…`.
+- Progress "All Concepts" read `m.score` while the API returns `mastery` — field names now match.
+- A quiz for a concept with no stored questions silently served unrelated questions. Explicit concept requests no longer widen to the rest of the subject; they return an honest empty state, and prerequisite substitution is always disclosed in `prerequisite_note`.
+- `SIMILAR_QUESTION` returned the same question as `TEST_ME` — it now excludes that pick when the bank has an alternative.
+- `total-derivatives-dc` was referenced by the chapter but missing from the backend curriculum, producing a slug-derived label; the concept definition was added.

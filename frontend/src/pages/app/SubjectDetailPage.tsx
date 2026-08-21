@@ -2,6 +2,7 @@ import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronRight, Clock, BookOpen, Layers, ArrowLeft } from "lucide-react";
 import { getSubject, getChaptersBySubject, getConceptsByChapter } from "../../data/curriculum";
+import { masteryColor, useMasteryMap } from "../../services/adaptiveEngine";
 
 const TABS = ["Overview", "Chapters", "Notes", "PYQs", "Quizzes"] as const;
 type Tab = typeof TABS[number];
@@ -9,6 +10,7 @@ type Tab = typeof TABS[number];
 export function SubjectDetailPage() {
   const { subjectId } = useParams<{ subjectId: string }>();
   const subject = getSubject(subjectId ?? "");
+  const { map: masteryMap } = useMasteryMap();
   const [tab, setTab] = [("Chapters" as Tab), (v: Tab) => {}]; // simplified — no useState needed for static
 
   if (!subject) return (
@@ -21,6 +23,12 @@ export function SubjectDetailPage() {
   const chapters = getChaptersBySubject(subject.id);
   const totalMinutes = chapters.reduce((s, c) => s + c.estimatedMinutes, 0);
   const totalConcepts = chapters.reduce((s, c) => s + c.conceptIds.length, 0);
+
+  const average = (ids: string[]) =>
+    ids.length
+      ? Math.round(ids.reduce((s, id) => s + (masteryMap[id]?.score ?? 0), 0) / ids.length)
+      : 0;
+  const subjectMastery = average(chapters.flatMap(c => getConceptsByChapter(c.id).map(x => x.id)));
 
   return (
     <div className="p-6 lg:p-8 max-w-5xl mx-auto">
@@ -48,7 +56,7 @@ export function SubjectDetailPage() {
           </div>
           {/* Overall mastery */}
           <div className="text-center shrink-0">
-            <div className="text-3xl font-black text-amber-400">55%</div>
+            <div className={`text-3xl font-black ${masteryColor(subjectMastery)}`}>{subjectMastery}%</div>
             <div className="text-xs text-slate-500 mt-1">Mastery</div>
           </div>
         </div>
@@ -70,6 +78,7 @@ export function SubjectDetailPage() {
           <div className="text-center py-10 text-slate-500 text-sm">No chapters available yet.</div>
         ) : chapters.map((ch, i) => {
           const concepts = getConceptsByChapter(ch.id);
+          const chapterMastery = average(concepts.map(c => c.id));
           return (
             <motion.div key={ch.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
               <Link to={`/app/chapters/${ch.id}`}>
@@ -87,8 +96,8 @@ export function SubjectDetailPage() {
                   </div>
                   {/* Progress */}
                   <div className="text-right shrink-0">
-                    <div className="text-sm font-semibold text-amber-400">60%</div>
-                    <div className="text-xs text-slate-500">progress</div>
+                    <div className={`text-sm font-semibold ${masteryColor(chapterMastery)}`}>{chapterMastery}%</div>
+                    <div className="text-xs text-slate-500">mastery</div>
                   </div>
                   <ChevronRight size={16} className="text-slate-600 group-hover:text-indigo-400 transition-colors shrink-0" />
                 </div>
