@@ -2,13 +2,18 @@ import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Clock, ChevronRight, CheckCircle, AlertCircle, Circle } from "lucide-react";
 import { getChapter, getConceptsByChapter, getSubject } from "../../data/curriculum";
-import { getMastery, masteryColor } from "../../services/adaptiveEngine";
+import { useMasteryMap, masteryColor } from "../../services/adaptiveEngine";
 
 export function ChapterPage() {
   const { chapterId } = useParams<{ chapterId: string }>();
   const chapter = getChapter(chapterId ?? "");
   const subject = chapter ? getSubject(chapter.subjectId) : null;
   const concepts = chapterId ? getConceptsByChapter(chapterId) : [];
+  const { map: masteryMap } = useMasteryMap();
+
+  const chapterMastery = concepts.length
+    ? Math.round(concepts.reduce((sum, c) => sum + (masteryMap[c.id]?.score ?? 0), 0) / concepts.length)
+    : 0;
 
   if (!chapter) return (
     <div className="p-8 text-center">
@@ -42,8 +47,8 @@ export function ChapterPage() {
             </div>
           </div>
           <div className="text-center">
-            <div className="text-3xl font-black text-amber-400">60%</div>
-            <div className="text-xs text-slate-500 mt-1">Mastered</div>
+            <div className={`text-3xl font-black ${masteryColor(chapterMastery)}`}>{chapterMastery}%</div>
+            <div className="text-xs text-slate-500 mt-1">Chapter mastery</div>
           </div>
         </div>
       </motion.div>
@@ -51,9 +56,9 @@ export function ChapterPage() {
       <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Concepts</h2>
       <div className="space-y-2.5">
         {concepts.map((concept, i) => {
-          const mastery = getMastery(concept.id);
+          const mastery = masteryMap[concept.id];
           const status = mastery?.status ?? "not_started";
-          const score = mastery?.score ?? 0;
+          const score = Math.round(mastery?.score ?? 0);
           return (
             <motion.div key={concept.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}>
               <Link to={`/app/concepts/${concept.id}`}>

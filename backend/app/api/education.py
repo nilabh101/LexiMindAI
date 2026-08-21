@@ -134,6 +134,13 @@ CONCEPTS = [
         "keyPoints": ["Limit of a function as x→a","Left/right-hand limits","L'Hôpital's rule","Continuity"],
     },
     {
+        "id": "derivatives-dc", "name": "Derivatives",
+        "chapterId": "dc-em1", "subjectId": "em1-btech",
+        "difficulty": "beginner", "estimatedMinutes": 30, "prerequisites": ["limits-dc"],
+        "description": "Differentiation of single-variable functions and the standard rules.",
+        "keyPoints": ["Derivative as a limit","Product and quotient rules","Chain rule","Higher-order derivatives"],
+    },
+    {
         "id": "partial-derivatives-dc", "name": "Partial Derivatives",
         "chapterId": "dc-em1", "subjectId": "em1-btech",
         "difficulty": "intermediate", "estimatedMinutes": 40, "prerequisites": ["derivatives-dc"],

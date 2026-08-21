@@ -2,10 +2,12 @@ import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { CheckCircle, Lock, Clock, ChevronRight, AlertCircle, Circle, Zap } from "lucide-react";
-import { masteryColor } from "../../services/adaptiveEngine";
+import {
+  masteryColor, pathStatusToUi, currentUserId, currentSubjectId,
+  fetchLearningPath, type PathItem,
+} from "../../services/adaptiveEngine";
 import { getConcept, getSubject } from "../../data/curriculum";
-import type { LearningPathItem, LearningPathItemStatus } from "../../types/education";
-import { getLearningPathApi } from "../../lib/api";
+import type { LearningPathItemStatus } from "../../types/education";
 import { loadUser } from "../../store/userStore";
 
 const STATUS_CONFIG: Record<LearningPathItemStatus, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
@@ -18,16 +20,19 @@ const STATUS_CONFIG: Record<LearningPathItemStatus, { color: string; bg: string;
 
 export function LearningPathPage() {
   const user = loadUser();
-  const [path, setPath] = useState<LearningPathItem[]>([]);
+  const userId = currentUserId(user);
+  const subjectId = currentSubjectId(user);
+  const [path, setPath] = useState<PathItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const userId = user?.id || "demo-user-1";
-    const subjectId = user?.academicProfile?.subjectIds?.[0] || "em1-btech";
-    getLearningPathApi(userId, subjectId)
-      .then(r => setPath(r.data.items || []))
-      .catch(e => setError(e?.message || "Could not load learning path"));
-  }, [user?.id]);
+    setLoading(true);
+    fetchLearningPath(userId, subjectId)
+      .then(items => { setPath(items); setError(null); })
+      .catch(e => setError(e?.message || "Could not load learning path"))
+      .finally(() => setLoading(false));
+  }, [userId, subjectId]);
 
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto">
@@ -48,6 +53,12 @@ export function LearningPathPage() {
         ))}
       </div>
 
+      {!loading && path.length === 0 && !error && (
+        <div className="bg-white/3 border border-white/6 rounded-2xl p-8 text-center text-slate-400 text-sm">
+          No concepts are configured for this subject yet.
+        </div>
+      )}
+
       {/* Path nodes */}
       <div className="relative">
         {/* Vertical line */}
@@ -57,8 +68,9 @@ export function LearningPathPage() {
           {path.map((item, i) => {
             const concept = getConcept(item.conceptId);
             const subject = concept ? getSubject(concept.subjectId) : null;
-            const cfg = STATUS_CONFIG[item.status];
-            const isClickable = item.status !== "locked";
+            const uiStatus: LearningPathItemStatus = pathStatusToUi(item.status);
+            const cfg = STATUS_CONFIG[uiStatus];
+            const isClickable = uiStatus !== "locked";
 
             const CardContent = (
               <motion.div
@@ -68,9 +80,9 @@ export function LearningPathPage() {
                 <div className={`relative z-10 w-10 h-10 rounded-full border-2 flex items-center justify-center shrink-0 ${
                   item.isCurrentFocus
                     ? "bg-indigo-600 border-indigo-400 shadow-lg shadow-indigo-500/40"
-                    : item.status === "mastered"
+                    : uiStatus === "mastered"
                     ? "bg-emerald-600/30 border-emerald-500/50"
-                    : item.status === "locked"
+                    : uiStatus === "locked"
                     ? "bg-slate-800 border-slate-700"
                     : "bg-white/5 border-white/15"
                 } ${cfg.color}`}>
@@ -88,13 +100,21 @@ export function LearningPathPage() {
                           Current Focus
                         </span>
                       )}
-                      <div className={`font-semibold ${item.status === "locked" ? "text-slate-500" : "text-white"} leading-snug`}>
-                        {concept?.name ?? item.conceptId}
+                      <div className={`font-semibold ${uiStatus === "locked" ? "text-slate-500" : "text-white"} leading-snug`}>
+                        {concept?.name ?? item.concept ?? item.conceptId}
                       </div>
                       {subject && <div className="text-xs text-slate-500 mt-0.5">{subject.name}</div>}
                       {concept?.description && (
-                        <p className={`text-xs mt-1.5 line-clamp-1 ${item.status === "locked" ? "text-slate-600" : "text-slate-400"}`}>
+                        <p className={`text-xs mt-1.5 line-clamp-1 ${uiStatus === "locked" ? "text-slate-600" : "text-slate-400"}`}>
                           {concept.description}
+                        </p>
+                      )}
+                      {item.note && (
+                        <p className="text-xs mt-1.5 text-amber-300/80 leading-snug">{item.note}</p>
+                      )}
+                      {item.nextReviewAt && (
+                        <p className="text-xs mt-1 text-slate-500">
+                          Next review: {new Date(item.nextReviewAt).toLocaleDateString()}
                         </p>
                       )}
                     </div>
@@ -112,8 +132,8 @@ export function LearningPathPage() {
                   {item.mastery > 0 && (
                     <div className="mt-3 bg-black/20 rounded-full h-1">
                       <div className={`h-1 rounded-full ${
-                        item.status === "mastered" ? "bg-emerald-500" :
-                        item.status === "needs_review" ? "bg-orange-500" : "bg-indigo-500"
+                        uiStatus === "mastered" ? "bg-emerald-500" :
+                        uiStatus === "needs_review" ? "bg-orange-500" : "bg-indigo-500"
                       }`} style={{ width: `${item.mastery}%` }} />
                     </div>
                   )}

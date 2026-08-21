@@ -9,6 +9,15 @@ from typing import Optional, List
 from app.core.database import get_db
 from app.models.document import Document
 from app.core.config import settings
+from app.services.tutor import (
+    action_instruction,
+    build_student_context,
+    describe_student_context,
+    fallback_action_reply,
+    normalize_action,
+    note_sources,
+    resolve_action,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -24,17 +33,23 @@ class ChatRequest(BaseModel):
     message: str
     doc_id: Optional[int] = None
     history: Optional[List[ChatMessage]] = []
+    user_id: Optional[str] = None
     subject_id: Optional[str] = None
+    chapter_id: Optional[str] = None
     concept_id: Optional[str] = None
     education_level: Optional[str] = None
     course: Optional[str] = None
-    action: Optional[str] = None  # explain | simplify | example | hint | test | similar | mistake
+    # EXPLAIN | SIMPLIFY | EXAMPLE | HINT | TEST_ME | SIMILAR_QUESTION | EXPLAIN_MISTAKE
+    action: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
     reply: str
     model: str
     sources: Optional[List[dict]] = None
+    action: Optional[str] = None
+    actionData: Optional[dict] = None
+    studentContext: Optional[dict] = None
 
 
 def _build_system_prompt(doc_text: Optional[str], doc_name: Optional[str]) -> str:
@@ -155,7 +170,7 @@ def _fallback_response(message: str, doc_text: Optional[str]) -> str:
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
-    """Chat with AI about a document or general questions."""
+    """Personalized tutor turn: retrieval + student performance context."""
 
     # Load document context if provided
     doc_text = None
@@ -168,19 +183,38 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             doc_name = doc.original_filename
 
     retrieved = await _retrieve_academic_context(db, request)
-    system_prompt = _build_tutor_prompt(doc_text, doc_name, request, retrieved)
-    sources = retrieved.get("sources") if retrieved else None
+    student_context = await build_student_context(db, request.user_id, request.subject_id, request.concept_id)
+    action_payload = await resolve_action(db, request.action, request.user_id, request.subject_id, request.concept_id)
+    system_prompt = _build_tutor_prompt(doc_text, doc_name, request, retrieved, student_context)
+    for note in (action_payload.get("notes") or [])[:2]:
+        system_prompt += f"\n\n[stored note] {note.get('title')}\n{(note.get('content') or '')[:800]}"
+    sources = list(retrieved.get("sources") or []) if retrieved else []
+    sources += note_sources(action_payload.get("notes") or [])
+    picked_question = action_payload.get("question")
+    if picked_question:
+        # Cite the stored question the action is built on — never a fabricated reference.
+        entry = {"title": picked_question.get("source"), "type": "QUESTION", "questionId": picked_question.get("id")}
+        if picked_question.get("year"):
+            entry["year"] = picked_question["year"]
+        sources.append(entry)
+    action = normalize_action(request.action)
+
+    def respond(reply: str, model: str) -> ChatResponse:
+        return ChatResponse(
+            reply=reply, model=model, sources=sources,
+            action=action, actionData=action_payload or None, studentContext=student_context,
+        )
 
     from app.services.llm import generate_text, provider_status
     status = provider_status()
     if status.get("configured"):
         try:
             result = generate_text(
-                _user_prompt(request),
+                _user_prompt(request, action_payload),
                 system=system_prompt,
             )
             if result.get("provider") != "fallback" or not GEMINI_API_KEY:
-                return ChatResponse(reply=result["text"], model=result.get("provider") or "llm", sources=sources)
+                return respond(result["text"], result.get("provider") or "llm")
         except Exception as e:
             print(f"LLM error: {e}")
 
@@ -190,19 +224,20 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                 reply = await _async_gemini(system_prompt, request.history or [], request.message)
             except Exception:
                 reply = _call_gemini_rest(system_prompt, request.history or [], request.message)
-            return ChatResponse(reply=reply, model="gemini-1.5-flash", sources=sources)
+            return respond(reply, "gemini-1.5-flash")
         except Exception as e:
             print(f"Gemini error: {e}")
 
-    reply = _fallback_response(request.message, doc_text)
-    if retrieved and retrieved.get("chunks"):
+    # No provider: answer from stored records only.
+    reply = fallback_action_reply(request.action, action_payload) or _fallback_response(request.message, doc_text)
+    if retrieved and retrieved.get("chunks") and not action_payload.get("question") and not action_payload.get("notes"):
         snippets = "\n\n".join((c.get("text") or "")[:400] for c in retrieved["chunks"][:2])
         reply = (
             "I don't have an LLM provider configured, so this answer is grounded only in retrieved study material:\n\n"
             f"{snippets}\n\n"
             + reply
         )
-    return ChatResponse(reply=reply, model="fallback", sources=sources)
+    return respond(reply, "fallback")
 
 
 async def _async_gemini(system_prompt: str, history: List[ChatMessage], message: str) -> str:
@@ -213,22 +248,13 @@ async def _async_gemini(system_prompt: str, history: List[ChatMessage], message:
     )
 
 
-def _user_prompt(request: ChatRequest) -> str:
-    action = (request.action or "").lower()
-    guides = {
-        "explain": "Explain the concept clearly.",
-        "simplify": "Simplify the explanation for a beginner.",
-        "example": "Give a worked example.",
-        "hint": "Give a hint, not the full solution.",
-        "test": "Ask one short test question.",
-        "similar": "Give a similar practice question from the retrieved PYQs if available.",
-        "mistake": "Explain the likely mistake without inventing facts.",
-    }
-    extra = guides.get(action, "")
+def _user_prompt(request: ChatRequest, action_payload: dict) -> str:
+    extra = action_instruction(request.action, action_payload or {})
     return f"{extra}\n\nStudent question: {request.message}".strip()
 
 
-def _build_tutor_prompt(doc_text, doc_name, request: ChatRequest, retrieved: dict) -> str:
+def _build_tutor_prompt(doc_text, doc_name, request: ChatRequest, retrieved: dict,
+                        student_context: Optional[dict] = None) -> str:
     base = (
         "You are LexiMind AI Tutor. Answer using ONLY the retrieved academic context when it is present. "
         "If the context is insufficient, say so. Never invent PYQ years, marks, or sources. "
@@ -245,6 +271,11 @@ def _build_tutor_prompt(doc_text, doc_name, request: ChatRequest, retrieved: dic
         profile.append(f"concept: {request.concept_id}")
     if profile:
         base += "\nStudent context: " + ", ".join(profile)
+    if student_context:
+        base += (
+            "\n\nStudent performance (only make claims supported by this data):\n"
+            + describe_student_context(student_context)
+        )
     if doc_text:
         excerpt = doc_text[:4000]
         base += f"\n\nActive document '{doc_name}':\n{excerpt}"

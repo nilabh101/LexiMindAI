@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Clock, CheckCircle, BookOpen, Zap, MessageCircle, ChevronRight } from "lucide-react";
 import { getConcept, getSubject, getChapter, CONCEPTS } from "../../data/curriculum";
-import { getMastery, masteryColor, masteryBgColor, statusLabel } from "../../services/adaptiveEngine";
+import { useMasteryMap, masteryColor, masteryBgColor, statusLabel } from "../../services/adaptiveEngine";
 import { listAcademicNotes, listQuestions } from "../../lib/api";
 
 export function ConceptPage() {
@@ -11,7 +11,8 @@ export function ConceptPage() {
   const concept = getConcept(conceptId ?? "");
   const subject = concept ? getSubject(concept.subjectId) : null;
   const chapter = concept ? getChapter(concept.chapterId) : null;
-  const mastery = conceptId ? getMastery(conceptId) : undefined;
+  const { map: masteryMap } = useMasteryMap();
+  const mastery = conceptId ? masteryMap[conceptId] : undefined;
 
   const [notes, setNotes] = useState<any[]>([]);
   const [pyqs, setPyqs] = useState<any[]>([]);
@@ -67,8 +68,13 @@ export function ConceptPage() {
           </div>
           {mastery && (
             <div className="text-center shrink-0">
-              <div className={`text-4xl font-black ${masteryColor(mastery.score)}`}>{mastery.score}%</div>
-              <div className="text-xs text-slate-500 mt-1">Mastery</div>
+              <div className={`text-4xl font-black ${masteryColor(mastery.score)}`}>{Math.round(mastery.score)}%</div>
+              <div className="text-xs text-slate-500 mt-1">LexiMind Mastery Score</div>
+              {mastery.questionsAttempted > 0 && (
+                <div className="text-[10px] text-slate-500 mt-0.5">
+                  {mastery.questionsCorrect}/{mastery.questionsAttempted} correct
+                </div>
+              )}
             </div>
           )}
         </div>

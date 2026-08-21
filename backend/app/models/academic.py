@@ -134,9 +134,19 @@ class ConceptMastery(Base):
     mastery_score = Column(Float, default=0.0)
     questions_attempted = Column(Integer, default=0)
     questions_correct = Column(Integer, default=0)
+    questions_incorrect = Column(Integer, default=0)
     last_attempted = Column(DateTime, nullable=True)
+    last_correct_at = Column(DateTime, nullable=True)
+    streak = Column(Integer, default=0)
     confidence = Column(Float, default=0.0)
     status = Column(String(30), default="not_started")
+    # Phase 3: uppercase concept state (see core.adaptive_config.STATE_*)
+    state = Column(String(30), default="NOT_STARTED")
+    subject_id = Column(String(80), nullable=True, index=True)
+    # Spaced review schedule for this user + concept.
+    next_review_at = Column(DateTime, nullable=True, index=True)
+    review_interval_days = Column(Integer, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class QuizSession(Base):
@@ -157,6 +167,8 @@ class QuizSession(Base):
 
 
 class QuizAnswer(Base):
+    """One question attempt by one user (the Phase 3 QuestionAttempt record)."""
+
     __tablename__ = "quiz_answers"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -164,7 +176,9 @@ class QuizAnswer(Base):
     quiz_id = Column(String(80), nullable=False, index=True)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=True, index=True)
     selected_answer = Column(Text, nullable=True)
+    correct_answer = Column(Text, nullable=True)
     correct = Column(Boolean, nullable=True)
     time_taken = Column(Float, nullable=True)
     concept_id = Column(String(120), nullable=True, index=True)
+    difficulty = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
