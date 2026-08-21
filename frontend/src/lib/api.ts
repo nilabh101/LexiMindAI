@@ -236,7 +236,40 @@ export const getMasteryApi = (userId: string) => api.get(`/learning/mastery/${us
 
 export const getAiStatus = () => api.get("/ai/status");
 
-export const sendTutorMessage = (
+// =====================
+// PHASE 3 ADAPTIVE ENGINE
+// =====================
+
+export const getWeakConceptsApi = (userId: string) =>
+  api.get(`/learning/weak-concepts/${userId}`);
+
+export const getRecommendedApi = (userId: string, subjectId?: string) =>
+  api.get(`/learning/recommended/${userId}`, { params: subjectId ? { subject_id: subjectId } : {} });
+
+export const getReviewScheduleApi = (userId: string) =>
+  api.get(`/learning/review-schedule`, { params: { user_id: userId } });
+
+export const getMistakesApi = (userId: string, conceptId?: string) =>
+  api.get(`/learning/mistakes`, {
+    params: { user_id: userId, ...(conceptId ? { concept_id: conceptId } : {}) },
+  });
+
+export const getDailyPlanApi = (userId: string, studyGoalMinutes = 30) =>
+  api.get(`/learning/daily-plan/${userId}`, { params: { study_goal_minutes: studyGoalMinutes } });
+
+export const adaptiveQuiz = (body: {
+  user_id: string;
+  subject_id: string;
+  chapter_id?: string;
+  concept_id?: string;
+  question_count?: number;
+  review_requested?: boolean;
+}) => api.post("/quizzes/adaptive", body);
+
+export const getQuizHistoryApi = (userId: string) =>
+  api.get(`/quiz/history`, { params: { user_id: userId } });
+
+export const sendTutorMessageV3 = (
   message: string,
   extra: {
     docId?: number | null;
@@ -246,6 +279,13 @@ export const sendTutorMessage = (
     educationLevel?: string;
     course?: string;
     action?: string;
+    userId?: string;
+    studentContext?: {
+      mastery_score?: number;
+      mastery_state?: string;
+      weak_concepts?: string[];
+      recent_mistakes?: Array<Record<string, unknown>>;
+    };
   } = {}
 ) =>
   api.post("/chat", {
@@ -257,4 +297,9 @@ export const sendTutorMessage = (
     education_level: extra.educationLevel,
     course: extra.course,
     action: extra.action,
+    user_id: extra.userId,
+    student_context: extra.studentContext ?? null,
   });
+
+// Legacy alias — kept for backward compatibility
+export const sendTutorMessage = sendTutorMessageV3;

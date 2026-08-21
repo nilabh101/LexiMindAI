@@ -137,6 +137,14 @@ class ConceptMastery(Base):
     last_attempted = Column(DateTime, nullable=True)
     confidence = Column(Float, default=0.0)
     status = Column(String(30), default="not_started")
+    # ── Phase 3 additions ──────────────────────────────────────────────────
+    questions_incorrect = Column(Integer, default=0)
+    last_correct_at = Column(DateTime, nullable=True)
+    streak = Column(Integer, default=0)          # consecutive correct answers; reset to 0 on incorrect
+    state = Column(String(30), default="NOT_STARTED")  # MasteryState enum value
+    next_review_at = Column(DateTime, nullable=True)   # spaced repetition schedule
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
 
 
 class QuizSession(Base):
@@ -168,3 +176,36 @@ class QuizAnswer(Base):
     time_taken = Column(Float, nullable=True)
     concept_id = Column(String(120), nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class QuestionAttempt(Base):
+    """Phase 3: per-question adaptive tracking. Links to QuizAnswer when available."""
+    __tablename__ = "question_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(80), nullable=False, index=True)
+    question_id = Column(Integer, ForeignKey("questions.id"), nullable=True, index=True)
+    concept_id = Column(String(120), nullable=True, index=True)
+    quiz_id = Column(String(80), nullable=True, index=True)
+    selected_answer = Column(Text, nullable=True)
+    correct = Column(Boolean, nullable=False)
+    difficulty = Column(String(20), nullable=True)   # easy | medium | hard
+    time_taken = Column(Float, nullable=True)        # seconds ≥ 0, max 3600
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    quiz_answer_id = Column(Integer, ForeignKey("quiz_answers.id"), nullable=True)
+
+
+class ReviewSchedule(Base):
+    """Phase 3: spaced-repetition schedule per user per concept."""
+    __tablename__ = "review_schedules"
+    __table_args__ = (UniqueConstraint("user_id", "concept_id", name="uq_user_concept_review"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(80), nullable=False, index=True)
+    concept_id = Column(String(120), nullable=False, index=True)
+    next_review_at = Column(DateTime, nullable=False, index=True)
+    current_interval_days = Column(Integer, default=1)
+    review_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))

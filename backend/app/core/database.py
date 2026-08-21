@@ -59,16 +59,33 @@ _DOCUMENT_NEW_COLUMNS = [
     ("ocr_message", "TEXT"),
 ]
 
+# Phase 3: new columns on concept_mastery table
+_MASTERY_NEW_COLUMNS = [
+    ("questions_incorrect", "INTEGER DEFAULT 0"),
+    ("last_correct_at", "DATETIME"),
+    ("streak", "INTEGER DEFAULT 0"),
+    ("state", "VARCHAR(30) DEFAULT 'NOT_STARTED'"),
+    ("next_review_at", "DATETIME"),
+    ("updated_at", "DATETIME"),
+]
+
 
 def _migrate_sqlite(sync_conn):
     inspector = inspect(sync_conn)
     tables = inspector.get_table_names()
     if "documents" not in tables:
         return
+    # documents table
     cols = {c["name"] for c in inspector.get_columns("documents")}
     for name, ddl in _DOCUMENT_NEW_COLUMNS:
         if name not in cols:
             sync_conn.execute(text(f"ALTER TABLE documents ADD COLUMN {name} {ddl}"))
+    # concept_mastery table — Phase 3 additions
+    if "concept_mastery" in tables:
+        mcols = {c["name"] for c in inspector.get_columns("concept_mastery")}
+        for name, ddl in _MASTERY_NEW_COLUMNS:
+            if name not in mcols:
+                sync_conn.execute(text(f"ALTER TABLE concept_mastery ADD COLUMN {name} {ddl}"))
 
 
 async def init_db():
@@ -78,9 +95,14 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_sqlite)
     try:
-        from app.services.demo_seed import seed_demo_if_needed
+        from app.services.demo_seed import seed_demo_if_needed, seed_phase3_if_needed
         async with AsyncSessionLocal() as session:
             await seed_demo_if_needed(session)
             await session.commit()
+        async with AsyncSessionLocal() as session:
+            await seed_phase3_if_needed(session)
+            await session.commit()
     except Exception as exc:
-        print(f"[init_db] demo seed skipped: {exc}")
+        import traceback
+        traceback.print_exc()
+        print(f"[init_db] seed skipped: {exc}")

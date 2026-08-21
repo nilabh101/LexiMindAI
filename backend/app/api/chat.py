@@ -1,10 +1,10 @@
-"""AI Chatbot endpoint — uses Google Gemini (free tier) with document context."""
+"""AI Chatbot endpoint — Phase 3: student_context + action-based system prompts."""
 import os
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from app.core.database import get_db
 from app.models.document import Document
@@ -15,9 +15,18 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 GEMINI_API_KEY = settings.GEMINI_API_KEY
 
 
+# ── Schemas ────────────────────────────────────────────────────────────────────
+
 class ChatMessage(BaseModel):
-    role: str          # "user" or "assistant"
+    role: str      # "user" or "assistant"
     content: str
+
+
+class StudentContext(BaseModel):
+    mastery_score: Optional[float] = None   # 0–100
+    mastery_state: Optional[str] = None     # MasteryState value
+    weak_concepts: Optional[List[str]] = []
+    recent_mistakes: Optional[List[Dict[str, Any]]] = []
 
 
 class ChatRequest(BaseModel):
@@ -28,134 +37,256 @@ class ChatRequest(BaseModel):
     concept_id: Optional[str] = None
     education_level: Optional[str] = None
     course: Optional[str] = None
-    action: Optional[str] = None  # explain | simplify | example | hint | test | similar | mistake
+    action: Optional[str] = None  # explain|simplify|example|hint|test|similar|mistake
+    student_context: Optional[StudentContext] = None   # Phase 3 addition
+    user_id: Optional[str] = None  # for personalised context lookup
 
 
 class ChatResponse(BaseModel):
     reply: str
     model: str
     sources: Optional[List[dict]] = None
+    fallback: bool = False
 
 
-def _build_system_prompt(doc_text: Optional[str], doc_name: Optional[str]) -> str:
+# ── System prompt builder ──────────────────────────────────────────────────────
+
+def _build_tutor_prompt(
+    doc_text: Optional[str],
+    doc_name: Optional[str],
+    request: ChatRequest,
+    retrieved: dict,
+) -> str:
     base = (
-        "You are LexiMind AI Assistant — a helpful, concise document analysis assistant. "
-        "Answer questions clearly. If you don't know something, say so honestly. "
-        "Keep responses focused and under 300 words unless the user asks for more detail."
+        "You are LexiMind AI Tutor — an expert academic assistant. "
+        "Answer ONLY using the retrieved academic context when it is present. "
+        "If the context is insufficient, say so honestly. "
+        "Never invent PYQ years, page numbers, marks, or source titles. "
+        "Cite page numbers and document names when they appear in the context."
     )
-    if doc_text:
-        # Truncate to ~6000 chars to stay within context limits
-        excerpt = doc_text[:6000].replace("\n", " ")
-        return (
-            f"{base}\n\n"
-            f"The user has uploaded a document called '{doc_name}'.\n"
-            f"Here is an excerpt from it:\n\n---\n{excerpt}\n---\n\n"
-            "Answer questions based on this document when relevant."
+
+    # Personalise based on mastery state (Phase 3)
+    sc = request.student_context
+    if sc and sc.mastery_state:
+        state = sc.mastery_state.upper()
+        if state in ("VERY_WEAK", "WEAK"):
+            base += (
+                "\n\nThis student is at an early stage with this concept. "
+                "Explain from first principles using simple language. "
+                "Avoid jargon not already introduced. "
+                "Focus on building intuition before formulas."
+            )
+        elif state == "DEVELOPING":
+            base += (
+                "\n\nThis student has basic understanding. "
+                "Reinforce core understanding with worked examples. "
+                "Point out common mistakes."
+            )
+        elif state in ("PROFICIENT", "MASTERED"):
+            base += (
+                "\n\nThis student has strong understanding. "
+                "Focus on advanced applications and exam-style questions. "
+                "Challenge them with harder variations."
+            )
+
+    if sc and sc.weak_concepts:
+        base += f"\n\nStudent's weak areas: {', '.join(sc.weak_concepts[:5])}."
+
+    if sc and sc.recent_mistakes:
+        mistake = sc.recent_mistakes[0]
+        base += (
+            f"\n\nRecent mistake: question '{str(mistake.get('question_text', ''))[:200]}', "
+            f"student answered '{mistake.get('selected_answer', '')}', "
+            f"correct answer: '{mistake.get('correct_answer', '')}'."
         )
+
+    # Academic profile
+    profile = []
+    if request.education_level:
+        profile.append(f"education level: {request.education_level}")
+    if request.course:
+        profile.append(f"course: {request.course}")
+    if request.subject_id:
+        profile.append(f"subject: {request.subject_id}")
+    if request.concept_id:
+        profile.append(f"concept: {request.concept_id}")
+    if profile:
+        base += "\nStudent profile: " + ", ".join(profile)
+
+    # Document context
+    if doc_text:
+        excerpt = doc_text[:4000]
+        base += f"\n\nActive document '{doc_name}':\n{excerpt}"
+
+    # Retrieved academic context
+    if retrieved:
+        for ch in (retrieved.get("chunks") or [])[:5]:
+            page = ch.get("page_number")
+            doc_name_chunk = ch.get("document_name") or "Study Notes"
+            base += (
+                f"\n\n[Source: {doc_name_chunk}, page {page}]\n"
+                f"{(ch.get('text') or '')[:800]}"
+            )
+        for q in (retrieved.get("pyqs") or [])[:4]:
+            year = q.get("year")
+            year_s = str(year) if year is not None else "unknown year"
+            base += f"\n\n[PYQ {year_s}]\n{(q.get('question_text') or '')[:500]}"
+        for c in (retrieved.get("concepts") or [])[:3]:
+            base += f"\n\n[Concept] {c.get('canonical_name') or c.get('name')}"
+
     return base
 
 
-async def _call_gemini(system_prompt: str, history: List[ChatMessage], user_message: str) -> str:
-    """Call Google Gemini 1.5 Flash (free tier, no API cost for low usage)."""
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
+def _user_prompt(request: ChatRequest) -> str:
+    action = (request.action or "").lower()
+    sc = request.student_context
 
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=system_prompt,
-        )
+    guides: Dict[str, str] = {
+        "explain":   "Explain this concept clearly and thoroughly.",
+        "simplify":  "Simplify the explanation for a beginner.",
+        "example":   "Give a clear worked example.",
+        "hint":      "Give a helpful hint — not the full solution.",
+        "test":      "Ask one short test question about this concept.",
+        "similar":   "Find and present a similar question from the retrieved study material (PYQs preferred).",
+        "mistake":   (
+            "Explain the student's most recent mistake using ONLY the correct answer and question text "
+            "from the retrieved context. Do not fabricate explanation if context is missing."
+        ) if (sc and sc.recent_mistakes) else (
+            "No mistake record is available for this concept."
+        ),
+    }
+    extra = guides.get(action, "")
+    return f"{extra}\n\nStudent question: {request.message}".strip()
 
-        # Build conversation history for Gemini
-        gemini_history = []
-        for msg in history[-6:]:  # keep last 6 turns to stay within limits
-            role = "user" if msg.role == "user" else "model"
-            gemini_history.append({"role": role, "parts": [msg.content]})
 
-        chat = model.start_chat(history=gemini_history)
-        response = chat.send_message(user_message)
-        return response.text
-
-    except Exception as e:
-        raise RuntimeError(f"Gemini API error: {str(e)}")
-
+# ── Gemini callers ────────────────────────────────────────────────────────────
 
 def _call_gemini_rest(system_prompt: str, history: List[ChatMessage], user_message: str) -> str:
-    """Fallback: call Gemini via REST (no SDK needed)."""
-    import httpx
-    import json
-
+    """Call Gemini via REST (no SDK required)."""
+    import httpx, json
     contents = []
     for msg in history[-6:]:
         role = "user" if msg.role == "user" else "model"
         contents.append({"role": role, "parts": [{"text": msg.content}]})
-
     contents.append({"role": "user", "parts": [{"text": user_message}]})
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    )
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": contents,
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 512,
-        },
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
     }
-
     response = httpx.post(url, json=payload, timeout=30)
     if response.status_code != 200:
-        raise RuntimeError(f"Gemini REST error {response.status_code}: {response.text[:200]}")
-
+        raise RuntimeError(f"Gemini REST error {response.status_code}: {response.text[:300]}")
     data = response.json()
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def _fallback_response(message: str, doc_text: Optional[str]) -> str:
-    """Rule-based fallback when no API key is set."""
-    msg = message.lower()
-
-    if doc_text:
-        words = doc_text.split()
-        word_count = len(words)
-        sentences = [s.strip() for s in doc_text.split('.') if len(s.strip()) > 20]
-
-        if any(w in msg for w in ["summarize", "summary", "about", "overview", "what is"]):
-            excerpt = ". ".join(sentences[:3]) + "." if sentences else "No text available."
-            return f"This document contains {word_count:,} words. Here's a brief overview:\n\n{excerpt}"
-
-        if any(w in msg for w in ["word count", "how many words", "length"]):
-            return f"This document contains **{word_count:,} words** across approximately {len(sentences)} sentences."
-
-        if any(w in msg for w in ["topic", "about", "main subject"]):
-            # Simple keyword extraction
-            from collections import Counter
-            import re
-            clean = re.sub(r'[^\w\s]', '', doc_text.lower())
-            stopwords = {"the","a","an","is","in","it","of","and","to","that","this","was","for","on","are","with","as","at","be","by","from","or","but","not","have","had","has","he","she","they","we","you","i","its","also","been","which","his","her","their","our","were","will","can","do","did","if","so","than","then","when","what","how","who"}
-            words_clean = [w for w in clean.split() if w not in stopwords and len(w) > 3]
-            common = Counter(words_clean).most_common(5)
-            topics = ", ".join(w for w, _ in common)
-            return f"The main topics appear to be: **{topics}**."
-
-        return (
-            "I can answer questions about this document. Try asking:\n"
-            "• 'Summarize this document'\n"
-            "• 'What are the main topics?'\n"
-            "• 'How many words does it have?'"
-        )
-
-    return (
-        "I'm LexiMind AI Assistant. Upload a document and I can help you:\n"
-        "• Summarize it\n"
-        "• Answer questions about it\n"
-        "• Explain topics and concepts\n\n"
-        "To enable smarter AI responses, add your Gemini API key to the `.env` file as `GEMINI_API_KEY=your_key`."
+async def _async_gemini(system_prompt: str, history: List[ChatMessage], message: str) -> str:
+    import asyncio
+    return await asyncio.get_event_loop().run_in_executor(
+        None, _call_gemini_rest, system_prompt, history, message
     )
 
 
+def _fallback_response(message: str, retrieved: dict) -> str:
+    """Assemble a useful fallback from retrieved academic context (no LLM)."""
+    chunks = (retrieved or {}).get("chunks") or []
+    if chunks:
+        snippets = "\n\n".join((c.get("text") or "")[:400] for c in chunks[:3])
+        return (
+            "[AI provider unavailable — showing retrieved study material]\n\n"
+            + snippets
+        )
+    return (
+        "I don't have an AI provider configured. "
+        "Please add GEMINI_API_KEY to backend/.env to enable AI responses.\n\n"
+        "I can still help with document analysis and quiz generation from your uploaded material."
+    )
+
+
+# ── Context retrieval ─────────────────────────────────────────────────────────
+
+async def _retrieve_academic_context(db: AsyncSession, request: ChatRequest) -> dict:
+    try:
+        from app.models.academic import DocumentChunk, Question, AcademicConcept
+        from app.services.embeddings import RetrievalService
+
+        chunks = (await db.execute(
+            select(DocumentChunk).limit(300)
+        )).scalars().all()
+        questions = (await db.execute(
+            select(Question).where(
+                Question.source.in_(["PYQ", "DEMO", "UPLOADED"])
+            ).limit(150)
+        )).scalars().all()
+        concepts = (await db.execute(select(AcademicConcept).limit(150))).scalars().all()
+
+        # Enrich chunks with document name
+        from app.models.document import Document as Doc
+        doc_ids = list({c.document_id for c in chunks if c.document_id})
+        doc_name_map: Dict[int, str] = {}
+        if doc_ids:
+            doc_rows = (await db.execute(
+                select(Doc).where(Doc.id.in_(doc_ids))
+            )).scalars().all()
+            doc_name_map = {d.id: (d.original_filename or d.filename or "Document") for d in doc_rows}
+
+        svc = RetrievalService()
+        result = svc.retrieve_context(
+            request.message,
+            chunks=[{
+                "id": c.id,
+                "document_id": c.document_id,
+                "page_number": c.page_number,
+                "section": c.section,
+                "text": c.text,
+                "subject_id": c.subject_id,
+                "concept_id": c.concept_id,
+                "document_name": doc_name_map.get(c.document_id, ""),
+            } for c in chunks],
+            questions=[{
+                "question_text": q.question_text,
+                "year": q.year,
+                "source": q.source,
+                "concept_id": q.concept_id,
+            } for q in questions],
+            concepts=[{
+                "canonical_name": c.canonical_name,
+                "slug": c.slug,
+                "name": c.canonical_name,
+            } for c in concepts],
+            filters={
+                "subject_id": request.subject_id,
+                "concept_id": request.concept_id,
+            },
+        )
+        # Build source list for response
+        sources = []
+        for ch in (result.get("chunks") or [])[:5]:
+            src = {
+                "document_name": ch.get("document_name") or "Study Notes",
+                "page_number": ch.get("page_number"),
+            }
+            sources.append(src)
+        for q in (result.get("pyqs") or [])[:3]:
+            if q.get("year"):
+                sources.append({"document_name": "PYQ", "year": q["year"]})
+        result["sources"] = sources
+        return result
+    except Exception as e:
+        print(f"[chat] context retrieval error: {e}")
+        return {}
+
+
+# ── Main endpoint ─────────────────────────────────────────────────────────────
+
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
-    """Chat with AI about a document or general questions."""
+    """AI Tutor endpoint with academic context retrieval and student mastery personalisation."""
 
     # Load document context if provided
     doc_text = None
@@ -167,115 +298,36 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             doc_text = doc.extracted_text
             doc_name = doc.original_filename
 
+    # Retrieve academic context
     retrieved = await _retrieve_academic_context(db, request)
-    system_prompt = _build_tutor_prompt(doc_text, doc_name, request, retrieved)
     sources = retrieved.get("sources") if retrieved else None
 
+    system_prompt = _build_tutor_prompt(doc_text, doc_name, request, retrieved)
+    user_prompt = _user_prompt(request)
+
+    # Try LLM service (from llm.py provider abstraction)
     from app.services.llm import generate_text, provider_status
     status = provider_status()
     if status.get("configured"):
         try:
-            result = generate_text(
-                _user_prompt(request),
-                system=system_prompt,
-            )
-            if result.get("provider") != "fallback" or not GEMINI_API_KEY:
-                return ChatResponse(reply=result["text"], model=result.get("provider") or "llm", sources=sources)
+            result = generate_text(user_prompt, system=system_prompt)
+            if result.get("provider") != "fallback":
+                return ChatResponse(
+                    reply=result["text"],
+                    model=result.get("provider") or "llm",
+                    sources=sources,
+                )
         except Exception as e:
-            print(f"LLM error: {e}")
+            print(f"[chat] LLM service error: {e}")
 
-    if GEMINI_API_KEY and GEMINI_API_KEY != "your_gemini_api_key_here":
+    # Direct Gemini fallback
+    if GEMINI_API_KEY and GEMINI_API_KEY.startswith("AIza"):
         try:
-            try:
-                reply = await _async_gemini(system_prompt, request.history or [], request.message)
-            except Exception:
-                reply = _call_gemini_rest(system_prompt, request.history or [], request.message)
+            reply = await _async_gemini(system_prompt, request.history or [], user_prompt)
             return ChatResponse(reply=reply, model="gemini-1.5-flash", sources=sources)
         except Exception as e:
-            print(f"Gemini error: {e}")
+            print(f"[chat] Gemini direct error: {e}")
 
-    reply = _fallback_response(request.message, doc_text)
-    if retrieved and retrieved.get("chunks"):
-        snippets = "\n\n".join((c.get("text") or "")[:400] for c in retrieved["chunks"][:2])
-        reply = (
-            "I don't have an LLM provider configured, so this answer is grounded only in retrieved study material:\n\n"
-            f"{snippets}\n\n"
-            + reply
-        )
-    return ChatResponse(reply=reply, model="fallback", sources=sources)
-
-
-async def _async_gemini(system_prompt: str, history: List[ChatMessage], message: str) -> str:
-    """Run Gemini SDK call in a thread pool to avoid blocking the event loop."""
-    import asyncio
-    return await asyncio.get_event_loop().run_in_executor(
-        None, _call_gemini_rest, system_prompt, history, message
-    )
-
-
-def _user_prompt(request: ChatRequest) -> str:
-    action = (request.action or "").lower()
-    guides = {
-        "explain": "Explain the concept clearly.",
-        "simplify": "Simplify the explanation for a beginner.",
-        "example": "Give a worked example.",
-        "hint": "Give a hint, not the full solution.",
-        "test": "Ask one short test question.",
-        "similar": "Give a similar practice question from the retrieved PYQs if available.",
-        "mistake": "Explain the likely mistake without inventing facts.",
-    }
-    extra = guides.get(action, "")
-    return f"{extra}\n\nStudent question: {request.message}".strip()
-
-
-def _build_tutor_prompt(doc_text, doc_name, request: ChatRequest, retrieved: dict) -> str:
-    base = (
-        "You are LexiMind AI Tutor. Answer using ONLY the retrieved academic context when it is present. "
-        "If the context is insufficient, say so. Never invent PYQ years, marks, or sources. "
-        "Cite page numbers when available."
-    )
-    profile = []
-    if request.education_level:
-        profile.append(f"education level: {request.education_level}")
-    if request.course:
-        profile.append(f"course: {request.course}")
-    if request.subject_id:
-        profile.append(f"subject: {request.subject_id}")
-    if request.concept_id:
-        profile.append(f"concept: {request.concept_id}")
-    if profile:
-        base += "\nStudent context: " + ", ".join(profile)
-    if doc_text:
-        excerpt = doc_text[:4000]
-        base += f"\n\nActive document '{doc_name}':\n{excerpt}"
-    if retrieved:
-        for ch in (retrieved.get("chunks") or [])[:5]:
-            page = ch.get("page_number")
-            base += f"\n\n[notes page {page}]\n{(ch.get('text') or '')[:800]}"
-        for q in (retrieved.get("pyqs") or [])[:4]:
-            year = q.get("year")
-            year_s = str(year) if year is not None else "unknown year"
-            base += f"\n\n[PYQ {year_s}]\n{(q.get('question_text') or '')[:500]}"
-        for c in (retrieved.get("concepts") or [])[:3]:
-            base += f"\n\n[concept] {c.get('canonical_name') or c.get('name')}"
-    return base
-
-
-async def _retrieve_academic_context(db: AsyncSession, request: ChatRequest) -> dict:
-    try:
-        from sqlalchemy import select as sel
-        from app.models.academic import DocumentChunk, Question, AcademicConcept
-        from app.services.embeddings import RetrievalService
-        chunks = (await db.execute(sel(DocumentChunk).limit(300))).scalars().all()
-        questions = (await db.execute(sel(Question).where(Question.source.in_(["PYQ", "DEMO", "UPLOADED"])).limit(150))).scalars().all()
-        concepts = (await db.execute(sel(AcademicConcept).limit(150))).scalars().all()
-        svc = RetrievalService()
-        return svc.retrieve_context(
-            request.message,
-            chunks=[{"id": c.id, "document_id": c.document_id, "page_number": c.page_number, "section": c.section, "text": c.text, "subject_id": c.subject_id, "concept_id": c.concept_id} for c in chunks],
-            questions=[{"question_text": q.question_text, "year": q.year, "source": q.source, "concept_id": q.concept_id} for q in questions],
-            concepts=[{"canonical_name": c.canonical_name, "slug": c.slug, "name": c.canonical_name} for c in concepts],
-            filters={"subject_id": request.subject_id, "concept_id": request.concept_id},
-        )
-    except Exception:
-        return {}
+    # Final fallback: retrieved context only
+    reply = _fallback_response(request.message, retrieved)
+    return ChatResponse(reply=reply, model="fallback", sources=sources, fallback=True)

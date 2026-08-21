@@ -1,74 +1,151 @@
 /**
- * Adaptive Engine Service Interface
- * Phase 1: stub implementations that return demo data.
- * Phase 2: connect to real ML backend.
+ * Adaptive Engine Service — Phase 3.
+ * All functions now call the real backend API.
+ * Demo data stubs removed.
  */
+import { api } from "../lib/api";
 import type { Mastery, LearningPathItem, MasteryStatus } from "../types/education";
-import {
-  DEMO_MASTERY, DEMO_LEARNING_PATH, DEMO_PROGRESS
-} from "../data/demoData";
-import { CONCEPTS } from "../data/curriculum";
 
-export function getMastery(conceptId: string): Mastery | undefined {
-  return DEMO_MASTERY.find(m => m.conceptId === conceptId);
+const DEFAULT_USER_ID = "demo-user-1";
+
+function getUserId(): string {
+  try {
+    const stored = localStorage.getItem("leximind_user");
+    if (stored) {
+      const u = JSON.parse(stored);
+      return u?.id || DEFAULT_USER_ID;
+    }
+  } catch {}
+  return DEFAULT_USER_ID;
 }
 
-export function getAllMastery(): Mastery[] {
-  return DEMO_MASTERY;
+// ── Live API calls ─────────────────────────────────────────────────────────────
+
+export async function fetchAllMastery(userId?: string): Promise<Mastery[]> {
+  const uid = userId || getUserId();
+  const r = await api.get(`/learning/mastery/${uid}`);
+  return (r.data || []).map((m: any) => ({
+    conceptId: m.conceptId,
+    score: m.score ?? m.mastery_score ?? 0,
+    status: _mapState(m.state || m.status) as MasteryStatus,
+    attemptCount: m.attemptCount ?? m.questionsAttempted ?? 0,
+    lastAttempted: m.lastAttempted,
+  }));
 }
 
-export function getWeakConcepts(): Mastery[] {
-  return DEMO_MASTERY.filter(m =>
-    m.status === "needs_review" || (m.status === "in_progress" && m.score < 50)
-  );
+export async function fetchWeakConcepts(userId?: string) {
+  const uid = userId || getUserId();
+  const r = await api.get(`/learning/weak-concepts/${uid}`);
+  return r.data?.weakConcepts || [];
 }
 
-export function getRecommendedConcept(): string {
-  const current = DEMO_LEARNING_PATH.find(i => i.isCurrentFocus);
-  return current?.conceptId ?? DEMO_LEARNING_PATH[0]?.conceptId ?? "";
+export async function fetchRecommendation(userId?: string) {
+  const uid = userId || getUserId();
+  const r = await api.get(`/learning/recommended/${uid}`);
+  return r.data?.recommendation || null;
 }
 
-export function getLearningPath(): LearningPathItem[] {
-  return DEMO_LEARNING_PATH;
+export async function fetchProgress(userId?: string) {
+  const uid = userId || getUserId();
+  const r = await api.get(`/learning/progress/${uid}`);
+  return r.data || {};
 }
 
-export function getProgressStats() {
-  return DEMO_PROGRESS;
+export async function fetchDailyPlan(userId?: string, studyGoalMinutes = 30) {
+  const uid = userId || getUserId();
+  const r = await api.get(`/learning/daily-plan/${uid}`, {
+    params: { study_goal_minutes: studyGoalMinutes },
+  });
+  return r.data?.activities || [];
 }
 
-/** Stub — will call POST /api/mastery/update in Phase 2 */
+export async function fetchReviewSchedule(userId?: string) {
+  const uid = userId || getUserId();
+  const r = await api.get(`/learning/review-schedule`, { params: { user_id: uid } });
+  return r.data?.overdueReviews || [];
+}
+
+export async function fetchMistakes(userId?: string, conceptId?: string) {
+  const uid = userId || getUserId();
+  const params: any = { user_id: uid };
+  if (conceptId) params.concept_id = conceptId;
+  const r = await api.get(`/learning/mistakes`, { params });
+  return r.data?.mistakes || [];
+}
+
 export async function updateMasteryAfterQuiz(
-  conceptPerformances: { conceptId: string; correct: number; total: number }[]
-): Promise<void> {
-  console.log("[AdaptiveEngine] updateMastery stub:", conceptPerformances);
+  userId: string,
+  quizId: string,
+  answers: Array<{
+    questionId?: number | string;
+    conceptId?: string;
+    correct: boolean;
+    difficulty?: string;
+    timeTaken?: number;
+  }>
+) {
+  const r = await api.post(`/learning/quiz-attempt`, {
+    userId,
+    quizId,
+    answers,
+  });
+  return r.data;
 }
 
-/** Stub — will call POST /api/learning-path/regenerate in Phase 2 */
-export async function generateLearningPath(subjectId: string): Promise<LearningPathItem[]> {
-  console.log("[AdaptiveEngine] generateLearningPath stub:", subjectId);
-  return DEMO_LEARNING_PATH;
-}
+// ── Sync helpers (kept for backwards compatibility in components) ──────────────
 
 export function masteryColor(score: number): string {
-  if (score >= 80) return "text-emerald-400";
-  if (score >= 60) return "text-amber-400";
+  if (score >= 85) return "text-emerald-400";
+  if (score >= 70) return "text-green-400";
+  if (score >= 50) return "text-amber-400";
   if (score >= 30) return "text-orange-400";
   return "text-red-400";
 }
 
 export function masteryBgColor(score: number): string {
-  if (score >= 80) return "bg-emerald-500/15 border-emerald-500/30";
-  if (score >= 60) return "bg-amber-500/15 border-amber-500/30";
+  if (score >= 85) return "bg-emerald-500/15 border-emerald-500/30";
+  if (score >= 70) return "bg-green-500/15 border-green-500/30";
+  if (score >= 50) return "bg-amber-500/15 border-amber-500/30";
   if (score >= 30) return "bg-orange-500/15 border-orange-500/30";
   return "bg-red-500/15 border-red-500/30";
 }
 
-export function statusLabel(status: MasteryStatus): string {
-  const map: Record<MasteryStatus, string> = {
+export function statusLabel(status: MasteryStatus | string): string {
+  const map: Record<string, string> = {
     not_started: "Not Started",
     in_progress: "In Progress",
     mastered: "Mastered",
     needs_review: "Needs Review",
+    NOT_STARTED: "Not Started",
+    VERY_WEAK: "Very Weak",
+    WEAK: "Weak",
+    DEVELOPING: "Developing",
+    PROFICIENT: "Proficient",
+    MASTERED: "Mastered",
   };
-  return map[status];
+  return map[status] || status;
 }
+
+function _mapState(state: string): MasteryStatus {
+  const map: Record<string, MasteryStatus> = {
+    NOT_STARTED: "not_started",
+    VERY_WEAK: "needs_review",
+    WEAK: "needs_review",
+    DEVELOPING: "in_progress",
+    PROFICIENT: "in_progress",
+    MASTERED: "mastered",
+    mastered: "mastered",
+    in_progress: "in_progress",
+    needs_review: "needs_review",
+    not_started: "not_started",
+  };
+  return map[state] || "not_started";
+}
+
+// Legacy sync stubs — now return empty defaults; components should use async fetch* versions
+export function getMastery(_conceptId: string): Mastery | undefined { return undefined; }
+export function getAllMastery(): Mastery[] { return []; }
+export function getWeakConcepts(): Mastery[] { return []; }
+export function getRecommendedConcept(): string { return ""; }
+export function getLearningPath(): LearningPathItem[] { return []; }
+export function getProgressStats() { return {}; }

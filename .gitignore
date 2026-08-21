@@ -1,12 +1,11 @@
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.egg
 *.egg-info/
-dist/
-build/
 .eggs/
 .Python
 env/
@@ -24,11 +23,13 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+.ruff_cache/
 
 # ─── Database ─────────────────────────────────────────────────────────────────
 *.db
 *.sqlite3
 *.sqlite
+backend/leximind.db
 
 # ─── Environment / Secrets ────────────────────────────────────────────────────
 .env
@@ -42,6 +43,7 @@ secrets/
 
 # ─── Node / Frontend ──────────────────────────────────────────────────────────
 node_modules/
+frontend/node_modules/
 dist/
 dist-ssr/
 *.local
@@ -61,6 +63,32 @@ backend/generated/
 backend/reports/output/
 *.pdf
 !docs/*.pdf
+
+# ─── Academic Data (Phase 4) ─────────────────────────────────────────────────
+data/raw/
+data/processed/
+data/exports/
+data/vectorstore/
+data/manifests/
+!data/README.md
+
+# ─── Vector stores / Embeddings ──────────────────────────────────────────────
+vectorstore/
+vector_store/
+chroma/
+.chroma/
+faiss/
+*.index
+*.faiss
+*.pkl
+!backend/app/**/*.pkl
+
+# ─── Model cache ─────────────────────────────────────────────────────────────
+models/
+model_cache/
+.cache/
+.huggingface/
+transformers_cache/
 
 # ─── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
@@ -93,3 +121,14 @@ pnpm-debug.log*
 .coverage
 coverage/
 test-results/
+
+# ─── Temporary ────────────────────────────────────────────────────────────────
+tmp/
+temp/
+*.tmp
+*.bak
+
+# ─── Virtual environments ─────────────────────────────────────────────────────
+backend/.venv/
+.venv/
+venv/
