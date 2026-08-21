@@ -27,6 +27,7 @@ from app.services.concept_graph import (
     is_prerequisite_mastered,
     load_mastery_map,
 )
+from app.services.ownership import exclude_foreign
 from app.services.quiz_bank import _serialize_q, _counts
 from app.services.weakness import get_weak_concepts
 
@@ -62,8 +63,13 @@ async def _candidate_questions(
     subject_id: Optional[str],
     chapter_id: Optional[str],
     limit: int,
+    viewer: Optional[str] = None,
 ) -> List[Question]:
-    stmt = select(Question).where(Question.review_status != "REJECTED")
+    stmt = exclude_foreign(
+        select(Question).where(Question.review_status != "REJECTED"),
+        Question.document_id,
+        viewer,
+    )
     if concept_ids:
         mapped = select(QuestionConcept.question_id).where(QuestionConcept.concept_id.in_(concept_ids))
         stmt = stmt.where(or_(Question.concept_id.in_(concept_ids), Question.id.in_(mapped)))
@@ -156,13 +162,17 @@ async def build_adaptive_quiz(
     preferred = target_difficulties(primary_mastery)
 
     # 4/5. Candidates minus recently answered questions.
-    candidates = await _candidate_questions(db, target_concepts, subject_id, chapter_id, question_count * 10)
+    candidates = await _candidate_questions(
+        db, target_concepts, subject_id, chapter_id, question_count * 10, viewer=user_id,
+    )
     widened = False
     if not candidates and target_concepts and not concept_id:
         # Only widen beyond the targets when the caller did not ask for a
         # specific concept — otherwise say the bank is empty instead of
         # quietly serving questions about something else.
-        candidates = await _candidate_questions(db, [], subject_id, chapter_id, question_count * 10)
+        candidates = await _candidate_questions(
+            db, [], subject_id, chapter_id, question_count * 10, viewer=user_id,
+        )
         widened = bool(candidates)
     recent_ids = set() if include_recent else await _recent_question_ids(db, user_id)
 

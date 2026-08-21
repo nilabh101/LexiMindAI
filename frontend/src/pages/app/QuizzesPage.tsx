@@ -23,6 +23,7 @@ interface AdaptivePlan {
   targetDifficulties: string[];
   selectionReason: string;
   prerequisiteNote?: string | null;
+  message?: string | null;
   sourceCounts?: Record<string, number>;
 }
 
@@ -76,6 +77,7 @@ export function QuizzesPage() {
         targetDifficulties: d.target_difficulties || [],
         selectionReason: d.selection_reason || "",
         prerequisiteNote: d.prerequisite_note,
+        message: d.message,
         sourceCounts: d.source_counts,
       });
       if (!qs.length) {
@@ -195,6 +197,12 @@ export function QuizzesPage() {
         {/* Taking quiz */}
         {quizState === "taking" && (
           <motion.div key="taking" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            {(plan?.prerequisiteNote || plan?.message) && (
+              <p className="text-amber-300/90 text-sm mb-4 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
+                {plan?.prerequisiteNote || plan?.message}
+              </p>
+            )}
+
             {/* Progress */}
             <div className="flex items-center gap-3 mb-6">
               <div className="flex-1 bg-white/8 rounded-full h-2">

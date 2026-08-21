@@ -14,6 +14,7 @@ from app.models.academic import (
 )
 from app.services.concept_graph import concept_context, concept_label
 from app.services.mistakes import analyze_mistake_patterns, get_mistakes
+from app.services.ownership import exclude_foreign
 from app.services.weakness import get_weak_concepts
 
 TUTOR_ACTIONS = [
@@ -140,8 +141,13 @@ async def _pick_question(
     subject_id: Optional[str],
     difficulty: Optional[str] = None,
     exclude_ids: Optional[List[int]] = None,
+    viewer: Optional[str] = None,
 ) -> Optional[Question]:
-    stmt = select(Question).where(Question.review_status != "REJECTED")
+    stmt = exclude_foreign(
+        select(Question).where(Question.review_status != "REJECTED"),
+        Question.document_id,
+        viewer,
+    )
     if concept_id:
         mapped = select(QuestionConcept.question_id).where(QuestionConcept.concept_id == concept_id)
         stmt = stmt.where(or_(Question.concept_id == concept_id, Question.id.in_(mapped)))
@@ -170,8 +176,8 @@ async def resolve_action(
     action = normalize_action(action)
     if action == "TEST_ME":
         seen = await _attempted_question_ids(db, user_id)
-        q = await _pick_question(db, concept_id, subject_id, exclude_ids=seen) \
-            or await _pick_question(db, concept_id, subject_id)
+        q = await _pick_question(db, concept_id, subject_id, exclude_ids=seen, viewer=user_id) \
+            or await _pick_question(db, concept_id, subject_id, viewer=user_id)
         return {"action": action, "question": _serialize_question(q) if q else None,
                 "empty": q is None,
                 "message": None if q else "No question is available for this concept yet."}
@@ -186,12 +192,12 @@ async def resolve_action(
         # Do not hand back the question TEST_ME would serve — "similar" must be a
         # different question when the bank has one.
         seen = await _attempted_question_ids(db, user_id)
-        test_me_pick = await _pick_question(db, concept_id, subject_id, exclude_ids=seen)
+        test_me_pick = await _pick_question(db, concept_id, subject_id, exclude_ids=seen, viewer=user_id)
         if test_me_pick:
             exclude = exclude + [test_me_pick.id]
         q = (
-            await _pick_question(db, concept_id, subject_id, difficulty, exclude)
-            or await _pick_question(db, concept_id, subject_id, None, exclude)
+            await _pick_question(db, concept_id, subject_id, difficulty, exclude, viewer=user_id)
+            or await _pick_question(db, concept_id, subject_id, None, exclude, viewer=user_id)
             or test_me_pick
         )
         return {"action": action, "question": _serialize_question(q) if q else None,
@@ -205,7 +211,7 @@ async def resolve_action(
                 "message": None if mistake else "No incorrect answers are recorded yet."}
 
     if action in ("EXPLAIN", "SIMPLIFY", "EXAMPLE", "HINT"):
-        notes = await concept_material(db, concept_id, subject_id)
+        notes = await concept_material(db, concept_id, subject_id, viewer=user_id)
         return {"action": action, "notes": notes, "empty": not notes,
                 "message": None if notes else "No stored notes cover this concept yet."}
 
@@ -217,11 +223,12 @@ async def concept_material(
     concept_id: Optional[str],
     subject_id: Optional[str] = None,
     limit: int = 2,
+    viewer: Optional[str] = None,
 ) -> List[Dict]:
     """Stored notes for a concept — the grounding used when no LLM is available."""
     if not concept_id and not subject_id:
         return []
-    stmt = select(AcademicNote)
+    stmt = exclude_foreign(select(AcademicNote), AcademicNote.source_document_id, viewer)
     if concept_id:
         stmt = stmt.where(AcademicNote.concept_id == concept_id)
     elif subject_id:

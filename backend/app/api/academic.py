@@ -1,6 +1,6 @@
 """Academic content, search, review, notes, retrieval."""
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +10,10 @@ from app.models.document import Document
 from app.models.academic import (
     DocumentPage, DocumentChunk, AcademicConcept, Question, QuestionConcept, AcademicNote,
 )
+from app.core.identity import optional_user_id
 from app.services.search import search_all
 from app.services.embeddings import RetrievalService
+from app.services.ownership import exclude_foreign, foreign_document_ids
 
 router = APIRouter(tags=["academic"])
 
@@ -68,17 +70,28 @@ def _question_out(q: Question) -> Dict:
 
 
 @router.get("/search")
-async def search(q: str = Query(..., min_length=1), db: AsyncSession = Depends(get_db)):
-    return await search_all(db, q)
+async def search(
+    request: Request,
+    q: str = Query(..., min_length=1),
+    user_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    return await search_all(db, q, viewer=optional_user_id(request, user_id))
 
 
 @router.get("/notes")
 async def list_notes(
+    request: Request,
     subject_id: Optional[str] = None,
     concept_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(AcademicNote)
+    stmt = exclude_foreign(
+        select(AcademicNote),
+        AcademicNote.source_document_id,
+        optional_user_id(request, user_id),
+    )
     if subject_id:
         stmt = stmt.where(AcademicNote.subject_id == subject_id)
     if concept_id:
@@ -88,8 +101,18 @@ async def list_notes(
 
 
 @router.get("/notes/{note_id}")
-async def get_note(note_id: int, db: AsyncSession = Depends(get_db)):
-    n = (await db.execute(select(AcademicNote).where(AcademicNote.id == note_id))).scalar_one_or_none()
+async def get_note(
+    note_id: int,
+    request: Request,
+    user_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = exclude_foreign(
+        select(AcademicNote).where(AcademicNote.id == note_id),
+        AcademicNote.source_document_id,
+        optional_user_id(request, user_id),
+    )
+    n = (await db.execute(stmt)).scalar_one_or_none()
     if not n:
         raise HTTPException(404, "Note not found")
     return _note_out(n)
@@ -97,13 +120,19 @@ async def get_note(note_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.get("/questions")
 async def list_questions(
+    request: Request,
     subject_id: Optional[str] = None,
     concept_id: Optional[str] = None,
     source: Optional[str] = None,
     pyq_only: bool = False,
+    user_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Question).where(Question.review_status != "REJECTED")
+    stmt = exclude_foreign(
+        select(Question).where(Question.review_status != "REJECTED"),
+        Question.document_id,
+        optional_user_id(request, user_id),
+    )
     if subject_id:
         stmt = stmt.where(Question.subject_id == subject_id)
     if concept_id:
@@ -186,13 +215,24 @@ async def update_question_review(question_id: int, body: ReviewUpdate, db: Async
 
 @router.get("/retrieve")
 async def retrieve(
+    request: Request,
     query: str = Query(..., min_length=1),
     subject_id: Optional[str] = None,
     concept_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    chunks = (await db.execute(select(DocumentChunk).limit(400))).scalars().all()
-    questions = (await db.execute(select(Question).where(Question.source.in_(["PYQ", "DEMO"])).limit(200))).scalars().all()
+    viewer = optional_user_id(request, user_id)
+    chunks = (await db.execute(
+        exclude_foreign(select(DocumentChunk), DocumentChunk.document_id, viewer).limit(400)
+    )).scalars().all()
+    questions = (await db.execute(
+        exclude_foreign(
+            select(Question).where(Question.source.in_(["PYQ", "DEMO"])),
+            Question.document_id,
+            viewer,
+        ).limit(200)
+    )).scalars().all()
     concepts = (await db.execute(select(AcademicConcept).limit(200))).scalars().all()
     svc = RetrievalService()
     return svc.retrieve_context(
@@ -205,8 +245,19 @@ async def retrieve(
 
 
 @router.get("/documents/{doc_id}/detail")
-async def document_detail(doc_id: int, db: AsyncSession = Depends(get_db)):
-    doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+async def document_detail(
+    doc_id: int,
+    request: Request,
+    user_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    viewer = optional_user_id(request, user_id)
+    doc = (await db.execute(
+        select(Document).where(
+            Document.id == doc_id,
+            Document.id.notin_(foreign_document_ids(viewer)),
+        )
+    )).scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document not found")
     pages = (await db.execute(select(DocumentPage).where(DocumentPage.document_id == doc_id).order_by(DocumentPage.page_number))).scalars().all()

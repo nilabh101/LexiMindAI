@@ -29,6 +29,7 @@ import { DocumentDetailPage } from "./pages/app/DocumentDetailPage";
 import { TutorPage }        from "./pages/app/TutorPage";
 import { ProgressPage }     from "./pages/app/ProgressPage";
 import { ProfilePage }      from "./pages/app/ProfilePage";
+import { SearchPage }       from "./pages/app/SearchPage";
 
 import "./index.css";
 
@@ -65,6 +66,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="tutor"                   element={<TutorPage />} />
             <Route path="progress"                element={<ProgressPage />} />
             <Route path="profile"                 element={<ProfilePage />} />
+            <Route path="search"                  element={<SearchPage />} />
           </Route>
 
           {/* Catch-all */}
